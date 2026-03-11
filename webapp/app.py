@@ -73,7 +73,7 @@ KIND_META = {
     "light": {"label": "Luci", "maxChannels": 8, "channelPrefix": "Luce"},
     "shutter": {"label": "Tapparelle", "maxChannels": 4, "channelPrefix": "Tapparella"},
     "dimmer": {"label": "Dimmer", "maxChannels": 1, "channelPrefix": "Dimmer"},
-    "thermostat": {"label": "Termostati", "maxChannels": 8, "channelPrefix": "Termostato"},
+    "thermostat": {"label": "Termostati", "maxChannels": 1, "channelPrefix": "Termostato"},
 }
 
 STORE_LOCK = threading.Lock()

@@ -146,7 +146,7 @@ function forcedInstanceFromUrl(){const parts=location.pathname.split("/").filter
 function tokenKey(instanceId){return `sheltr-token-${instanceId}`}
 
 function setLoginVisible(v){loginBox.classList.toggle("hidden",!v)}
-function setControlVisible(v){topEl.classList.toggle("hidden",!v);if(!v)roomsEl.innerHTML=""}
+function setControlVisible(v){topEl.classList.toggle("hidden",!v);logoutBtn.classList.toggle("hidden",!(v&&state.authRequired));if(!v)roomsEl.innerHTML=""}
 
 async function api(path,options={},useAuth=true){
   const method=String(options.method||"GET").toUpperCase();
@@ -202,7 +202,7 @@ window.tpDay=(i,d)=>{const e=state.tpData.entries[i];if(!e)return;const has=norm
 window.tpDel=i=>{state.tpData.entries.splice(i,1);renderTpRows()}
 window.cmdLight=(id,action)=>sendLightCommandById(id,action);
 
-async function init(){const forced=slugify(forcedInstanceFromUrl(),"");if(!forced){note("Istanza non specificata. Apri URL /control/<istanza>",true);return}state.instanceId=forced;tickNow();setInterval(tickNow,1000);try{const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}`,{},false);state.instance=res.instance;state.instanceId=res.instance.id;rebuildProfiles();const title=`${state.instance.name} / Sheltr Cloud`;titleEl.textContent=title;document.title=title;state.authRequired=!!(state.instance?.auth?.passwordConfigured);logoutBtn.classList.toggle("hidden",!state.authRequired);if(state.authRequired){loginUser.value=cleanText(state.instance?.auth?.username,"");state.token=cleanText(localStorage.getItem(tokenKey(state.instance.id)),"");setControlVisible(false);if(!state.token){setLoginVisible(true);note("Login richiesto per questa istanza.")}else{setLoginVisible(false);const ok=await loadLights(false,false);if(ok){setControlVisible(true)}else{setControlVisible(false);setLoginVisible(true)}}}else{setLoginVisible(false);const ok=await loadLights(false,false);setControlVisible(ok)}}catch(err){note(err.message,true)}}
+async function init(){const forced=slugify(forcedInstanceFromUrl(),"");if(!forced){note("Istanza non specificata. Apri URL /control/<istanza>",true);return}state.instanceId=forced;tickNow();setInterval(tickNow,1000);setControlVisible(false);setLoginVisible(false);try{const res=await api(`/api/instances/${encodeURIComponent(state.instanceId)}`,{},false);state.instance=res.instance;state.instanceId=res.instance.id;rebuildProfiles();const title=`${state.instance.name} / Sheltr Cloud`;titleEl.textContent=title;document.title=title;state.authRequired=!!(state.instance?.auth?.passwordConfigured);if(state.authRequired){loginUser.value=cleanText(state.instance?.auth?.username,"");state.token="";localStorage.removeItem(tokenKey(state.instance.id));setLoginVisible(true);setControlVisible(false);note("Login richiesto per questa istanza.")}else{setLoginVisible(false);const ok=await loadLights(false,false);setControlVisible(ok)}}catch(err){note(err.message,true)}}
 
 refreshBtn.onclick=()=>loadLights(true,false);
 allOnBtn.onclick=()=>sendAll('on');

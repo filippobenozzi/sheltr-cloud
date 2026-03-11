@@ -22,7 +22,7 @@
     .stack { display:grid; gap:var(--s2); }
     label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:170px; }
     input, select, button { font:12px/1.2 var(--mono); }
-    input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
+    input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; height:32px; background:var(--section); color:var(--fg); }
     button { border:1px solid var(--bd); background:#000; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
     button:hover { background:#111; }
     button.danger { background:#4f1111; border-color:#7d3535; }
@@ -31,6 +31,10 @@
     .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); background:var(--section); }
     .instance-item.active { background:#111; border-color:#fff; }
     .meta { color:var(--muted); font-size:11px; }
+    .instance-links { display:flex; align-items:center; gap:var(--s1); margin-top:6px; }
+    .instance-link { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:4px 8px; font-size:11px; background:#1f1f1f; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .instance-link:hover { background:#2b2b2b; }
+    .copy-icon { min-width:30px; padding:4px 8px; font-size:13px; line-height:1; }
     .board { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); margin:var(--s2) 0; background:var(--section); }
     .board h3 { font-size:13px; margin:0; }
     .board-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); }
@@ -48,10 +52,7 @@
 <body>
   <div class="topbar">
     <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Programmazione Schede</h1></div>
-    <div class="row">
-      <a class="nav" id="openControlTop" href="/control">Apri Controllo</a>
-      <button id="configLogout" type="button" class="hidden">Logout config</button>
-    </div>
+    <button id="configLogout" type="button" class="hidden">Logout config</button>
   </div>
 
   <section class="box stack hidden" id="configLoginBox">
@@ -110,7 +111,6 @@
           <button id="addBoard" type="button">Aggiungi scheda</button>
           <button id="saveBtn" type="button">Salva</button>
           <button id="publishBtn" type="button">Pubblica su MQTT</button>
-          <a class="nav" id="openControlBtn" href="/control">Apri controllo</a>
           <button id="deleteBtn" class="danger" type="button">Elimina istanza</button>
         </div>
 
@@ -127,7 +127,7 @@
       light: { label: "Luci", maxChannels: 8, prefix: "Luce" },
       shutter: { label: "Tapparelle", maxChannels: 4, prefix: "Tapparella" },
       dimmer: { label: "Dimmer", maxChannels: 1, prefix: "Dimmer" },
-      thermostat: { label: "Termostati", maxChannels: 8, prefix: "Termostato" }
+      thermostat: { label: "Termostati", maxChannels: 1, prefix: "Termostato" }
     };
 
     const state = {
@@ -146,7 +146,6 @@
       configPass: document.getElementById("configPass"),
       configLoginBtn: document.getElementById("configLoginBtn"),
       configLogout: document.getElementById("configLogout"),
-      openControlTop: document.getElementById("openControlTop"),
       createForm: document.getElementById("createForm"),
       newId: document.getElementById("newId"),
       newName: document.getElementById("newName"),
@@ -167,7 +166,6 @@
       addBoard: document.getElementById("addBoard"),
       saveBtn: document.getElementById("saveBtn"),
       publishBtn: document.getElementById("publishBtn"),
-      openControlBtn: document.getElementById("openControlBtn"),
       deleteBtn: document.getElementById("deleteBtn"),
       boards: document.getElementById("boards"),
       msg: document.getElementById("msg")
@@ -211,6 +209,32 @@
 
     function controlUrl(instanceId) {
       return `/control/${encodeURIComponent(instanceId)}`;
+    }
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (_) {
+        /* fallback */
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (_) {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      return ok;
     }
 
     function configTokenKey() {
@@ -334,14 +358,32 @@
         m.textContent = `${item.id} • ${item.boardsCount} schede${item.authRequired ? " • login" : ""}`;
         left.appendChild(b);
         left.appendChild(m);
-
+        const linkRow = document.createElement("div");
+        linkRow.className = "instance-links";
+        const path = controlUrl(item.id);
+        const fullUrl = `${window.location.origin}${path}`;
         const open = document.createElement("a");
-        open.className = "nav";
-        open.href = controlUrl(item.id);
-        open.textContent = "Controllo";
+        open.className = "instance-link";
+        open.href = path;
+        open.target = "_blank";
+        open.rel = "noopener";
+        open.title = fullUrl;
+        open.textContent = fullUrl;
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "copy-icon";
+        copy.title = "Copia link controllo";
+        copy.setAttribute("aria-label", "Copia link controllo");
+        copy.innerHTML = "&#128203;";
+        copy.onclick = async () => {
+          const ok = await copyText(fullUrl);
+          note(ok ? `Link copiato: ${fullUrl}` : "Copia non riuscita", !ok);
+        };
+        linkRow.appendChild(open);
+        linkRow.appendChild(copy);
+        left.appendChild(linkRow);
 
         box.appendChild(left);
-        box.appendChild(open);
         el.instances.appendChild(box);
       }
     }
@@ -351,7 +393,6 @@
         el.emptyState.classList.remove("hidden");
         el.editor.classList.add("hidden");
         el.boards.innerHTML = "";
-        el.openControlTop.href = "/control";
         return;
       }
 
@@ -369,10 +410,6 @@
       el.authPassword.value = "";
       el.authPasswordClear.checked = false;
       el.boardsCount.value = String((state.current.boards || []).length);
-
-      const url = controlUrl(state.current.id);
-      el.openControlBtn.href = url;
-      el.openControlTop.href = url;
 
       renderBoards();
     }
@@ -425,9 +462,6 @@
         row.appendChild(idF.l);
         const nameF = field("Nome scheda", board.name, (v) => { board.name = cleanText(v, board.id); });
         row.appendChild(nameF.l);
-        const addrF = field("Indirizzo", String(board.address), (v) => { board.address = clamp(toInt(v, board.address), 0, 254); }, "number");
-        addrF.i.min = "0"; addrF.i.max = "254";
-        row.appendChild(addrF.l);
 
         const kindL = document.createElement("label");
         kindL.textContent = "Tipo";
@@ -442,6 +476,10 @@
         kindS.onchange = () => { board.kind = KIND_META[kindS.value] ? kindS.value : "light"; state.current.boards[bi] = normalizeBoard(board, bi); renderBoards(); };
         kindL.appendChild(kindS);
         row.appendChild(kindL);
+
+        const addrF = field("Indirizzo", String(board.address), (v) => { board.address = clamp(toInt(v, board.address), 0, 254); }, "number");
+        addrF.i.min = "0"; addrF.i.max = "254";
+        row.appendChild(addrF.l);
 
         const max = KIND_META[board.kind].maxChannels;
         const fromF = field("Canale da", String(board.channelStart), (v) => { board.channelStart = clamp(toInt(v, board.channelStart), 1, max); state.current.boards[bi] = normalizeBoard(board, bi); renderBoards(); }, "number");
