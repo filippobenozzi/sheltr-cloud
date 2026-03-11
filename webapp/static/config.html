@@ -23,7 +23,7 @@
     label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:170px; }
     input, select, button { font:12px/1.2 var(--mono); }
     input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; height:32px; background:var(--section); color:var(--fg); }
-    button { border:1px solid var(--bd); background:#000; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+    button { border:1px solid var(--bd); background:#000; color:#fff; border-radius:6px; padding:6px 10px; height:32px; cursor:pointer; }
     button:hover { background:#111; }
     button.danger { background:#4f1111; border-color:#7d3535; }
     button.danger:hover { background:#662020; }
@@ -32,9 +32,9 @@
     .instance-item.active { background:#111; border-color:#fff; }
     .meta { color:var(--muted); font-size:11px; }
     .instance-links { display:flex; align-items:center; gap:var(--s1); margin-top:6px; }
-    .instance-link { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:4px 8px; font-size:11px; background:#1f1f1f; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .instance-link:hover { background:#2b2b2b; }
-    .copy-icon { min-width:30px; padding:4px 8px; font-size:13px; line-height:1; }
+    .instance-link { display:inline-flex; align-items:center; color:#fff; text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:0 10px; height:32px; font-size:12px; background:#000; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .instance-link:hover { background:#111; }
+    .copy-icon { min-width:32px; padding:0 8px; height:32px; font-size:14px; line-height:1; }
     .board { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); margin:var(--s2) 0; background:var(--section); }
     .board h3 { font-size:13px; margin:0; }
     .board-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); }
