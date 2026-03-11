@@ -6,7 +6,7 @@ Stack Docker per:
 - interfaccia web per gestire più istanze DR154
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
-- interfaccia comando luci (`ON/OFF/TOGGLE`) via MQTT
+- interfaccia comando luci (`ON/OFF`) via MQTT
 - pubblicazione configurazione su MQTT (retain)
 
 ## Avvio rapido
@@ -72,6 +72,20 @@ Formati payload supportati per i comandi luce:
 - `frame_hex_compact_crlf`: come sopra + terminatore `\r\n`
 - `frame_bytes`: invio bytes raw del frame protocollo
 - `json`: payload JSON applicativo
+
+## Affidabilita comandi luce
+
+Per ridurre i comandi persi in rete:
+
+- `MQTT_COMMAND_QOS=1` (default)
+- retry publish automatico lato web app:
+  - `MQTT_COMMAND_RETRIES=2`
+  - `MQTT_COMMAND_RETRY_DELAY_MS=180`
+- per payload `frame_*` su azioni `on/off`, invio ripetuto (idempotente):
+  - `MQTT_COMMAND_REPEAT_ONOFF=2`
+  - `MQTT_COMMAND_REPEAT_GAP_MS=120`
+
+Nota: le azioni supportate per le luci sono `on` e `off`.
 
 ## Note esposizione Internet
 

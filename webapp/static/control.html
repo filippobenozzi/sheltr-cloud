@@ -219,13 +219,12 @@
 
         const actions = document.createElement("div");
         actions.className = "actions";
-        ["on", "off", "toggle"].forEach((action) => {
+        ["on", "off"].forEach((action) => {
           const b = document.createElement("button");
           b.type = "button";
           b.textContent = action.toUpperCase();
           if (action === "on" && on === true) b.className = "pri lon";
           if (action === "off" && on === false) b.className = "pri loff";
-          if (action === "toggle") b.className = "pri";
           b.onclick = () => sendLightCommand(light, action);
           actions.appendChild(b);
         });
@@ -280,7 +279,8 @@
           renderLights();
         }
         const frameHex = sent[0] && sent[0].frameHex ? sent[0].frameHex : "";
-        note(`Comando '${action}' inviato.${frameHex ? ` Frame: ${frameHex}` : ""}`);
+        const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
+        note(`Comando '${action}' inviato x${sendCount}.${frameHex ? ` Frame: ${frameHex}` : ""}`);
       } catch (err) {
         note(err.message, true);
       }
@@ -305,7 +305,8 @@
           return m && typeof m.isOn === "boolean" ? { ...x, isOn: m.isOn } : x;
         });
         renderLights();
-        note(`Comando '${action}' inviato a ${sent.length} luci.`);
+        const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
+        note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce).`);
       } catch (err) {
         note(err.message, true);
       }

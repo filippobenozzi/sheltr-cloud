@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,12 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "filippo1994")
 MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "dr154").strip("/") or "dr154"
 MQTT_CONFIG_QOS = max(0, min(2, int(os.environ.get("MQTT_CONFIG_QOS", "1"))))
 MQTT_COMMAND_QOS = max(0, min(2, int(os.environ.get("MQTT_COMMAND_QOS", "1"))))
-LIGHT_COMMAND_ACTIONS = {"on", "off", "toggle"}
+MQTT_PUBLISH_TIMEOUT_SEC = max(1, min(30, int(os.environ.get("MQTT_PUBLISH_TIMEOUT_SEC", "6"))))
+MQTT_COMMAND_RETRIES = max(0, min(5, int(os.environ.get("MQTT_COMMAND_RETRIES", "2"))))
+MQTT_COMMAND_RETRY_DELAY_MS = max(0, int(os.environ.get("MQTT_COMMAND_RETRY_DELAY_MS", "180")))
+MQTT_COMMAND_REPEAT_ONOFF = max(1, min(5, int(os.environ.get("MQTT_COMMAND_REPEAT_ONOFF", "2"))))
+MQTT_COMMAND_REPEAT_GAP_MS = max(0, int(os.environ.get("MQTT_COMMAND_REPEAT_GAP_MS", "120")))
+LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {
     "json",
     "frame_hex_space",
@@ -41,7 +47,7 @@ LIGHT_RELAY_COMMANDS = {
     7: 0x67,
     8: 0x68,
 }
-LIGHT_ACTION_CODES = {"on": 0x41, "off": 0x53, "toggle": 0x55}
+LIGHT_ACTION_CODES = {"on": 0x41, "off": 0x53}
 FRAME_START = 0x49
 FRAME_END = 0x46
 FRAME_LEN = 14
@@ -225,41 +231,62 @@ def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | N
     return None
 
 
-def mqtt_publish(topic: str, payload: Any, *, qos: int, retain: bool) -> None:
+def mqtt_publish(
+    topic: str,
+    payload: Any,
+    *,
+    qos: int,
+    retain: bool,
+    retries: int = 0,
+    retry_delay_ms: int = 0,
+) -> None:
     if isinstance(payload, (bytes, bytearray)):
         raw_payload = bytes(payload)
     elif isinstance(payload, dict):
         raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     else:
         raw_payload = str(payload).encode("utf-8")
-    client_id = f"iotsheltr-{os.getpid()}-{int(datetime.now().timestamp())}"
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        client_id=client_id,
-        protocol=mqtt.MQTTv311,
-    )
-    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-    try:
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-        client.loop_start()
-        result = client.publish(topic, raw_payload, qos=qos, retain=retain)
-        if qos > 0:
-            result.wait_for_publish(timeout=5)
-            if not result.is_published():
-                raise RuntimeError("Timeout pubblicazione MQTT")
-        else:
-            rc = getattr(result, "rc", None)
-            if rc not in (0, None):
-                raise RuntimeError(f"Publish MQTT fallita rc={rc}")
-    finally:
+    attempts = max(1, retries + 1)
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        client_id = f"iotsheltr-{os.getpid()}-{int(time.time() * 1000)}-{attempt}"
+        client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=client_id,
+            protocol=mqtt.MQTTv311,
+        )
+        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
         try:
-            client.loop_stop()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            client.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
+            client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+            client.loop_start()
+            result = client.publish(topic, raw_payload, qos=qos, retain=retain)
+            if qos > 0:
+                result.wait_for_publish(timeout=MQTT_PUBLISH_TIMEOUT_SEC)
+                if not result.is_published():
+                    raise RuntimeError("Timeout pubblicazione MQTT")
+            else:
+                rc = getattr(result, "rc", None)
+                if rc not in (0, None):
+                    raise RuntimeError(f"Publish MQTT fallita rc={rc}")
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt >= attempts:
+                break
+            if retry_delay_ms > 0:
+                time.sleep(retry_delay_ms / 1000.0)
+        finally:
+            try:
+                client.loop_stop()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+    raise RuntimeError(f"Publish MQTT fallita dopo {attempts} tentativi: {last_error}")
 
 
 def get_light_command_topic(instance: dict[str, Any]) -> str:
@@ -365,8 +392,6 @@ def desired_light_state(action: str, previous: bool | None) -> bool | None:
         return True
     if action == "off":
         return False
-    if action == "toggle":
-        return not bool(previous)
     return previous
 
 
@@ -424,6 +449,11 @@ def api_meta():
             "mqttBaseTopic": MQTT_BASE_TOPIC,
             "mqttConfigQos": MQTT_CONFIG_QOS,
             "mqttCommandQos": MQTT_COMMAND_QOS,
+            "mqttPublishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
+            "mqttCommandRetries": MQTT_COMMAND_RETRIES,
+            "mqttCommandRetryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
+            "mqttCommandRepeatOnOff": MQTT_COMMAND_REPEAT_ONOFF,
+            "mqttCommandRepeatGapMs": MQTT_COMMAND_REPEAT_GAP_MS,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
     )
@@ -514,7 +544,7 @@ def api_publish_instance(instance_id: str):
         return err("Topic MQTT non valido", 400)
 
     try:
-        mqtt_publish(topic, instance, qos=MQTT_CONFIG_QOS, retain=True)
+        mqtt_publish(topic, instance, qos=MQTT_CONFIG_QOS, retain=True, retries=1, retry_delay_ms=200)
     except Exception as exc:  # noqa: BLE001
         return err(f"Errore pubblicazione MQTT: {exc}", 502)
 
@@ -632,8 +662,21 @@ def api_light_command(instance_id: str):
             )
         except ValueError as exc:
             return err(str(exc), 400)
+        send_count = 1
+        if payload_format.startswith("frame_") and action in {"on", "off"}:
+            send_count = MQTT_COMMAND_REPEAT_ONOFF
         try:
-            mqtt_publish(topic, payload, qos=MQTT_COMMAND_QOS, retain=False)
+            for idx in range(send_count):
+                mqtt_publish(
+                    topic,
+                    payload,
+                    qos=MQTT_COMMAND_QOS,
+                    retain=False,
+                    retries=MQTT_COMMAND_RETRIES,
+                    retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
+                )
+                if idx < (send_count - 1) and MQTT_COMMAND_REPEAT_GAP_MS > 0:
+                    time.sleep(MQTT_COMMAND_REPEAT_GAP_MS / 1000.0)
         except Exception as exc:  # noqa: BLE001
             return err(f"Errore pubblicazione comando luce: {exc}", 502)
         previous_state = instance_state.get(entity["id"]) if isinstance(instance_state.get(entity["id"]), dict) else {}
@@ -653,6 +696,8 @@ def api_light_command(instance_id: str):
             item["payloadBytesHex"] = payload.hex().upper()
         elif isinstance(payload, str):
             item["payload"] = payload
+        item["sendCount"] = send_count
+        item["publishRetries"] = MQTT_COMMAND_RETRIES
         item["isOn"] = instance_state[entity["id"]]["isOn"]
         sent.append(item)
 
@@ -666,6 +711,13 @@ def api_light_command(instance_id: str):
             "payloadFormat": payload_format,
             "qos": MQTT_COMMAND_QOS,
             "retain": False,
+            "reliability": {
+                "retries": MQTT_COMMAND_RETRIES,
+                "retryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
+                "repeatOnOff": MQTT_COMMAND_REPEAT_ONOFF,
+                "repeatGapMs": MQTT_COMMAND_REPEAT_GAP_MS,
+                "publishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
+            },
             "sent": sent,
         }
     )
