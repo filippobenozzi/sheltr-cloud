@@ -1,12 +1,54 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=/config">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Redirect</title>
+  <meta name="theme-color" content="#191919">
+  <title>Sheltr Cloud</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <style>
+    :root{--bg:#191919;--section:#282828;--fg:#f0efed;--muted:#bcbab6;--bd:#bcbab6;--accent:#60a5fa;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,Monaco,Liberation Mono,monospace}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,#242424,#171717 60%);color:var(--fg);font:14px/1.5 var(--mono);display:flex;align-items:center;justify-content:center;padding:20px}
+    .box{width:min(860px,100%);background:var(--section);border:1px solid var(--bd);border-radius:12px;padding:20px}
+    .brand{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+    .logo{width:32px;height:32px}
+    h1{margin:0;font-size:26px}
+    p{margin:0 0 12px;color:var(--muted)}
+    ul{margin:0 0 14px 18px;padding:0}
+    li{margin:0 0 6px}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;color:#fff;border:1px solid var(--bd);border-radius:8px;padding:10px 14px;background:#111}
+    a.btn:hover{background:#000}
+    .pri{background:#1e3a57;border-color:#1e3a57}
+    .pri:hover{background:#274967}
+    .muted{color:var(--muted);font-size:12px;margin-top:12px}
+    code{color:var(--accent)}
+  </style>
 </head>
 <body>
-  <p>Redirecting to <a href="/config">/config</a>...</p>
+  <main class="box">
+    <div class="brand">
+      <img class="logo" src="/static/logo.svg" alt="Sheltr">
+      <h1>Sheltr Cloud</h1>
+    </div>
+    <p>
+      Sheltr Cloud is a lightweight MQTT + web control stack for DR154 devices.
+      It lets you configure instances and control boards using Protocol 1.6 in transparent mode.
+    </p>
+    <ul>
+      <li>Public authenticated MQTT broker support.</li>
+      <li>Instance-based configuration for lights, shutters, dimmers, and thermostats.</li>
+      <li>Per-instance control pages with login, room grouping, status refresh, and hourly profiles.</li>
+      <li>Protocol frame publishing over MQTT with polling-based feedback.</li>
+    </ul>
+    <div class="row">
+      <a class="btn pri" href="/config">Open Configuration</a>
+      <a class="btn" href="/control">Open Control</a>
+    </div>
+    <p class="muted">
+      Tip: direct control pages follow <code>/control/&lt;instance-id&gt;</code> (for example <code>/control/casa-demo</code>).
+    </p>
+  </main>
 </body>
 </html>

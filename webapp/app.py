@@ -1892,8 +1892,10 @@ def execute_thermostat_targets(
 
         poll_data = verification.get("poll") if isinstance(verification.get("poll"), dict) else {}
         poll_setpoint = None
-        if isinstance(poll_data, dict):
-            poll_setpoint = clamp(to_int(poll_data.get("setpoint"), -1), 0, 99)
+        if isinstance(poll_data, dict) and "setpoint" in poll_data:
+            raw_poll_setpoint = to_int(poll_data.get("setpoint"), -1)
+            if raw_poll_setpoint >= 0:
+                poll_setpoint = clamp(raw_poll_setpoint, 0, 99)
         final_setpoint = float(poll_setpoint) if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else float(next_setpoint)
         final_is_on = final_setpoint > 0 if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else bool(next_power)
         output_mask = clamp(to_int(verification.get("outputMask"), 0), 0, 255)
@@ -2281,7 +2283,7 @@ def err(message: str, status: int = 400):
 
 @app.get("/")
 def root():
-    return send_from_directory(app.static_folder, "config.html")
+    return send_from_directory(app.static_folder, "index.html")
 
 
 @app.get("/control")
