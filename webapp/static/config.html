@@ -12,23 +12,23 @@
     body { font:13px/1.35 var(--mono); margin:0; padding:var(--s3); min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); }
     .brand { display:flex; align-items:center; gap:var(--s2); }
     .logo { width:28px; height:28px; display:block; flex:0 0 28px; }
-    .layout { display:grid; grid-template-columns:280px 1fr; gap:var(--s2); }
-    .box { background:var(--section); border:1px solid var(--bd); border-radius:6px; padding:var(--s3); }
     .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); gap:var(--s2); flex-wrap:wrap; }
     h1 { font-size:17px; margin:0; }
     h2 { font-size:14px; margin:0 0 var(--s2); color:var(--muted); }
+    .layout { display:grid; gap:var(--s2); }
+    .box { background:var(--section); border:1px solid var(--bd); border-radius:6px; padding:var(--s3); }
     .small { font-size:12px; color:var(--muted); margin:0; }
+    .row { display:flex; gap:var(--s2); flex-wrap:wrap; align-items:flex-end; }
     .stack { display:grid; gap:var(--s2); }
-    .row { display:flex; gap:var(--s2); flex-wrap:wrap; }
-    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:160px; }
+    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:170px; }
     input, select, button { font:12px/1.2 var(--mono); }
     input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
     button { border:1px solid var(--bd); background:#000; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
     button:hover { background:#111; }
     button.danger { background:#4f1111; border-color:#7d3535; }
     button.danger:hover { background:#662020; }
-    .instances { display:grid; gap:var(--s2); }
-    .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); }
+    .instances { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:var(--s2); }
+    .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); background:var(--section); }
     .instance-item.active { background:#111; border-color:#fff; }
     .meta { color:var(--muted); font-size:11px; }
     .board { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); margin:var(--s2) 0; background:var(--section); }
@@ -36,40 +36,39 @@
     .board-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); }
     .channels { border-top:1px dashed var(--bd); margin-top:var(--s2); padding-top:var(--s2); display:grid; gap:6px; }
     .channel { display:grid; grid-template-columns:56px 1fr 140px; gap:var(--s2); align-items:center; }
-    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; }
+    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; background:var(--section); }
     a.nav { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:6px 10px; background:var(--section); font-size:12px; }
     a.nav:hover { background:#2b2b2b; }
     .foot { margin-top:auto; padding:var(--s3) 0 2px; text-align:center; font-style:italic; font:12px/1.3 var(--mono); color:var(--muted); }
     .foot a { color:inherit; }
     .hidden { display:none; }
-    @media (max-width: 980px) { .layout { grid-template-columns:1fr; } }
     @media (max-width: 720px) { .channel { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
   <div class="topbar">
     <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Programmazione Schede</h1></div>
-    <a class="nav" id="toControl" href="/control">Vai a Controllo</a>
+    <a class="nav" id="openControlTop" href="/control">Apri Controllo</a>
   </div>
 
   <main class="layout">
-    <aside class="box stack">
+    <section class="box stack">
       <h2>Istanze DR154</h2>
-      <form id="createForm" class="stack">
+      <form id="createForm" class="row">
         <label>ID istanza<input id="newId" placeholder="es. casa-demo" required></label>
         <label>Nome istanza<input id="newName" placeholder="es. Casa Demo" required></label>
         <button type="submit">Crea istanza</button>
       </form>
       <div class="instances" id="instances"></div>
-    </aside>
+    </section>
 
     <section class="box">
       <div id="emptyState" class="small">Crea o seleziona una istanza.</div>
       <div id="editor" class="hidden">
         <h2 id="instanceTitle">Istanza</h2>
         <div class="row">
+          <label>ID istanza<input id="instanceId" placeholder="es. casa-demo"></label>
           <label>Nome istanza<input id="instanceName"></label>
-          <label>Topic configurazione<input id="configTopicInput"></label>
           <label>Topic comandi luci<input id="lightTopicInput"></label>
           <label>Topic risposta DR154<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
           <label>Formato payload
@@ -87,9 +86,17 @@
         </div>
 
         <div class="row" style="margin-top:8px;">
+          <label>Username login controllo<input id="authUsername" placeholder="es. filippo"></label>
+          <label>Password login controllo
+            <input id="authPassword" type="password" placeholder="Lascia vuoto per non cambiare">
+          </label>
+        </div>
+
+        <div class="row" style="margin-top:8px;">
           <button id="addBoard" type="button">Aggiungi scheda</button>
           <button id="saveBtn" type="button">Salva</button>
           <button id="publishBtn" type="button">Pubblica su MQTT</button>
+          <a class="nav" id="openControlBtn" href="/control">Apri controllo</a>
           <button id="deleteBtn" class="danger" type="button">Elimina istanza</button>
         </div>
 
@@ -98,6 +105,7 @@
       <pre class="msg" id="msg"></pre>
     </section>
   </main>
+
   <footer class="foot">not all those who wander are lost ~ <a href="https://filippo.im" target="_blank" rel="noopener">filippo.im</a></footer>
 
   <script>
@@ -111,7 +119,7 @@
     const state = { instances: [], current: null, currentId: null, mqttBaseTopic: "dr154" };
 
     const el = {
-      toControl: document.getElementById("toControl"),
+      openControlTop: document.getElementById("openControlTop"),
       createForm: document.getElementById("createForm"),
       newId: document.getElementById("newId"),
       newName: document.getElementById("newName"),
@@ -119,16 +127,19 @@
       emptyState: document.getElementById("emptyState"),
       editor: document.getElementById("editor"),
       instanceTitle: document.getElementById("instanceTitle"),
+      instanceId: document.getElementById("instanceId"),
       instanceName: document.getElementById("instanceName"),
-      configTopicInput: document.getElementById("configTopicInput"),
       lightTopicInput: document.getElementById("lightTopicInput"),
       lightResponseTopicInput: document.getElementById("lightResponseTopicInput"),
       lightPayloadFormat: document.getElementById("lightPayloadFormat"),
       protocolVersion: document.getElementById("protocolVersion"),
       boardsCount: document.getElementById("boardsCount"),
+      authUsername: document.getElementById("authUsername"),
+      authPassword: document.getElementById("authPassword"),
       addBoard: document.getElementById("addBoard"),
       saveBtn: document.getElementById("saveBtn"),
       publishBtn: document.getElementById("publishBtn"),
+      openControlBtn: document.getElementById("openControlBtn"),
       deleteBtn: document.getElementById("deleteBtn"),
       boards: document.getElementById("boards"),
       msg: document.getElementById("msg")
@@ -154,7 +165,7 @@
     }
 
     function slugify(value, fallback) {
-      const out = cleanText(value, fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+      const out = cleanText(value, fallback).toLowerCase().replace(/_/g, "-").replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
       return out || fallback;
     }
 
@@ -170,8 +181,8 @@
       return `${state.mqttBaseTopic}/${instanceId}/pub/light`;
     }
 
-    function defaultConfigTopic(instanceId) {
-      return `${state.mqttBaseTopic}/${instanceId}/config`;
+    function controlUrl(instanceId) {
+      return `/control/${encodeURIComponent(instanceId)}`;
     }
 
     function normalizeBoard(raw, index) {
@@ -231,6 +242,7 @@
       for (const item of state.instances) {
         const box = document.createElement("div");
         box.className = `instance-item${item.id === state.currentId ? " active" : ""}`;
+
         const left = document.createElement("div");
         const b = document.createElement("button");
         b.type = "button";
@@ -238,14 +250,14 @@
         b.onclick = () => loadInstance(item.id);
         const m = document.createElement("div");
         m.className = "meta";
-        m.textContent = `${item.id} • ${item.boardsCount} schede`;
+        m.textContent = `${item.id} • ${item.boardsCount} schede${item.authRequired ? " • login" : ""}`;
         left.appendChild(b);
         left.appendChild(m);
 
         const open = document.createElement("a");
         open.className = "nav";
-        open.href = `/instance/${encodeURIComponent(item.id)}`;
-        open.textContent = "Apri";
+        open.href = controlUrl(item.id);
+        open.textContent = "Controllo";
 
         box.appendChild(left);
         box.appendChild(open);
@@ -258,23 +270,28 @@
         el.emptyState.classList.remove("hidden");
         el.editor.classList.add("hidden");
         el.boards.innerHTML = "";
+        el.openControlTop.href = "/control";
         return;
       }
 
       el.emptyState.classList.add("hidden");
       el.editor.classList.remove("hidden");
+
       el.instanceTitle.textContent = `Istanza: ${state.current.name}`;
-      el.instanceName.value = state.current.name;
+      el.instanceId.value = cleanText(state.current.id, "");
+      el.instanceName.value = cleanText(state.current.name, state.current.id);
       el.protocolVersion.value = state.current.protocolVersion || "1.6";
-      el.configTopicInput.value = defaultConfigTopic(state.current.id);
-      const topic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
-      el.lightTopicInput.value = topic;
-      const responseTopic = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopic(state.current.id));
-      el.lightResponseTopicInput.value = responseTopic;
-      const fmt = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
-      el.lightPayloadFormat.value = fmt;
+      el.lightTopicInput.value = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
+      el.lightResponseTopicInput.value = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopic(state.current.id));
+      el.lightPayloadFormat.value = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
+      el.authUsername.value = cleanText(state.current?.auth?.username, "");
+      el.authPassword.value = "";
       el.boardsCount.value = String((state.current.boards || []).length);
-      el.toControl.href = `/instance/${encodeURIComponent(state.current.id)}`;
+
+      const url = controlUrl(state.current.id);
+      el.openControlBtn.href = url;
+      el.openControlTop.href = url;
+
       renderBoards();
     }
 
@@ -381,7 +398,7 @@
       if (!state.current) return null;
       state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
       return {
-        id: state.current.id,
+        id: slugify(el.instanceId.value, state.current.id),
         name: cleanText(el.instanceName.value, state.current.id),
         protocolVersion: "1.6",
         mqtt: {
@@ -389,13 +406,17 @@
           lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
           lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
         },
+        auth: {
+          username: cleanText(el.authUsername.value, ""),
+          password: cleanText(el.authPassword.value, "")
+        },
         boards: state.current.boards
       };
     }
 
     async function loadInstances(preferredId = "") {
       const res = await api("/api/instances");
-      state.instances = res.instances || [];
+      state.instances = Array.isArray(res.instances) ? res.instances : [];
       renderInstances();
       if (preferredId && state.instances.some((x) => x.id === preferredId)) return loadInstance(preferredId);
       if (state.currentId && state.instances.some((x) => x.id === state.currentId)) return loadInstance(state.currentId);
@@ -417,40 +438,47 @@
       try {
         const id = slugify(el.newId.value, "dr154-1");
         const name = cleanText(el.newName.value, id);
-        await api("/api/instances", { method: "POST", body: JSON.stringify({ id, name, boards: [] }) });
-        el.newId.value = ""; el.newName.value = "";
+        await api("/api/instances", {
+          method: "POST",
+          body: JSON.stringify({
+            id,
+            name,
+            auth: { username: "", password: "" },
+            boards: []
+          })
+        });
+        el.newId.value = "";
+        el.newName.value = "";
         note(`Istanza '${id}' creata.`);
         await loadInstances(id);
-      } catch (err) { note(err.message, true); }
+      } catch (err) {
+        note(err.message, true);
+      }
     }
 
-    async function saveCurrent() {
-      if (!state.current) return;
-      try {
-        const payload = currentPayload();
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, { method: "PUT", body: JSON.stringify(payload) });
-        state.current = res.instance;
-        state.currentId = res.instance.id;
-        note("Configurazione salvata.");
-        await loadInstances(state.current.id);
-      } catch (err) { note(err.message, true); }
+    async function saveCurrent(silent = false) {
+      if (!state.current) return null;
+      const payload = currentPayload();
+      const fromId = state.current.id;
+      const res = await api(`/api/instances/${encodeURIComponent(fromId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+      state.current = res.instance;
+      state.currentId = res.instance.id;
+      if (!silent) note("Configurazione salvata.");
+      el.authPassword.value = "";
+      await loadInstances(state.current.id);
+      return res.instance;
     }
 
     async function publishCurrent() {
       if (!state.current) return;
       try {
-        const payload = currentPayload();
-        const saved = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, {
-          method: "PUT",
-          body: JSON.stringify(payload)
-        });
-        state.current = saved.instance;
-        state.currentId = saved.instance.id;
-        await loadInstances(state.current.id);
-        const topic = cleanText(el.configTopicInput.value, defaultConfigTopic(state.current.id));
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/publish`, {
+        const saved = await saveCurrent(true);
+        const res = await api(`/api/instances/${encodeURIComponent(saved.id)}/publish`, {
           method: "POST",
-          body: JSON.stringify({ topic })
+          body: JSON.stringify({})
         });
         note(`Configurazione pubblicata su '${res.topic}'.`);
       } catch (err) {
@@ -466,7 +494,9 @@
         await api(`/api/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
         note(`Istanza '${id}' eliminata.`);
         await loadInstances("");
-      } catch (err) { note(err.message, true); }
+      } catch (err) {
+        note(err.message, true);
+      }
     }
 
     function addBoard() {
@@ -488,7 +518,7 @@
 
     el.createForm.addEventListener("submit", createInstance);
     el.addBoard.addEventListener("click", addBoard);
-    el.saveBtn.addEventListener("click", saveCurrent);
+    el.saveBtn.addEventListener("click", () => saveCurrent(false).catch((err) => note(err.message, true)));
     el.publishBtn.addEventListener("click", publishCurrent);
     el.deleteBtn.addEventListener("click", deleteCurrent);
 

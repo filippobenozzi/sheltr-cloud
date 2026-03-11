@@ -12,27 +12,22 @@
     body { margin:0; padding:var(--s3); min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px/1.35 var(--mono); }
     .brand { display:flex; align-items:center; gap:var(--s2); margin:0; }
     .logo { width:28px; height:28px; display:block; flex:0 0 28px; }
-    .layout { display:grid; grid-template-columns:280px 1fr; gap:var(--s2); }
+    .layout { display:grid; gap:var(--s2); }
     .box { background:var(--section); border:1px solid var(--bd); border-radius:6px; padding:var(--s3); }
     .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); gap:var(--s2); flex-wrap:wrap; }
     h1 { font-size:17px; margin:0; }
     h2 { font-size:14px; margin:0 0 var(--s2); color:var(--muted); }
     .small { font-size:12px; color:var(--muted); margin:0; }
-    .stack { display:grid; gap:var(--s2); }
     .row { display:flex; gap:var(--s2); flex-wrap:wrap; align-items:flex-end; }
-    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:180px; }
-    input, select, button { font:12px/1.2 var(--mono); }
-    input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
+    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:200px; }
+    input, button { font:12px/1.2 var(--mono); }
+    input { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
     button { border:1px solid var(--bd); background:#191919; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
     button:hover { background:#111; }
     button.pri { background:#1e3a57; border-color:#1e3a57; }
     button.pri:hover { background:#274967; }
     button.lon, button.lon:hover { background:#1b6b2f; border-color:#1b6b2f; color:#fff; }
     button.loff, button.loff:hover { background:#9c252d; border-color:#9c252d; color:#fff; }
-    .instances { display:grid; gap:var(--s2); }
-    .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); }
-    .instance-item.active { background:#111; border-color:#fff; }
-    .meta { color:var(--muted); font-size:11px; }
     .lights { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:var(--s2); margin-top:var(--s2); }
     .card { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); background:var(--section); }
     .card h3 { margin:0; font-size:13px; }
@@ -40,72 +35,65 @@
     .state.on { color:#7cc58a; }
     .state.off { color:#ff8a80; }
     .state.unknown { color:var(--muted); }
+    .meta { color:var(--muted); font-size:11px; }
     .actions { display:flex; gap:6px; flex-wrap:wrap; }
-    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; }
+    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; background:var(--section); }
     a.nav { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:6px 10px; background:var(--section); font-size:12px; }
     a.nav:hover { background:#2b2b2b; }
     .foot { margin-top:auto; padding:var(--s3) 0 2px; text-align:center; font-style:italic; font:12px/1.3 var(--mono); color:var(--muted); }
     .foot a { color:inherit; }
     .hidden { display:none; }
-    @media (max-width: 980px) { .layout { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
   <div class="topbar">
-    <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Controllo Luci</h1></div>
+    <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1 id="title">Sheltr Cloud</h1></div>
     <a class="nav" id="toConfig" href="/config">Vai a Config</a>
   </div>
 
   <main class="layout">
-    <aside class="box stack">
-      <h2>Istanze DR154</h2>
-      <div class="instances" id="instances"></div>
-    </aside>
-
-    <section class="box">
-      <div id="emptyState" class="small">Seleziona una istanza.</div>
-      <div id="panel" class="hidden">
-        <h2 id="instanceTitle">Istanza</h2>
-        <div class="row">
-          <label>Topic comandi luci<input id="lightTopicInput"></label>
-          <label>Topic risposta DR154<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
-          <label>Formato payload
-            <select id="lightPayloadFormat">
-              <option value="frame_hex_space">Frame HEX con spazi</option>
-              <option value="frame_hex_compact">Frame HEX compatto</option>
-              <option value="frame_hex_space_crlf">Frame HEX con spazi + CRLF</option>
-              <option value="frame_hex_compact_crlf">Frame HEX compatto + CRLF</option>
-              <option value="frame_bytes">Frame bytes raw</option>
-              <option value="json">JSON</option>
-            </select>
-          </label>
-          <button id="saveRouteBtn" type="button">Salva topic/formato</button>
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <button id="refreshBtn" type="button">Aggiorna stato</button>
-          <button id="allOnBtn" class="pri" type="button">Accendi tutte</button>
-          <button id="allOffBtn" class="pri" type="button">Spegni tutte</button>
-        </div>
-        <div id="lights" class="lights"></div>
+    <section class="box" id="loginBox">
+      <h2>Login istanza</h2>
+      <div class="row">
+        <label>Username<input id="loginUser" autocomplete="username"></label>
+        <label>Password<input id="loginPass" type="password" autocomplete="current-password"></label>
+        <button id="loginBtn" type="button">Accedi</button>
       </div>
-      <pre class="msg" id="msg"></pre>
+      <p class="small">Credenziali impostate nella pagina di configurazione dell'istanza.</p>
     </section>
+
+    <section class="box hidden" id="panel">
+      <div class="row">
+        <button id="refreshBtn" type="button">Aggiorna stato</button>
+        <button id="allOnBtn" class="pri" type="button">Accendi tutte</button>
+        <button id="allOffBtn" class="pri" type="button">Spegni tutte</button>
+      </div>
+      <div id="lights" class="lights"></div>
+    </section>
+
+    <pre class="msg" id="msg"></pre>
   </main>
+
   <footer class="foot">not all those who wander are lost ~ <a href="https://filippo.im" target="_blank" rel="noopener">filippo.im</a></footer>
 
   <script>
-    const state = { instances: [], current: null, currentId: null, lights: [], mqttBaseTopic: "dr154" };
+    const state = {
+      instanceId: "",
+      instance: null,
+      lights: [],
+      token: "",
+      authRequired: false,
+      pollTimer: null
+    };
 
     const el = {
+      title: document.getElementById("title"),
       toConfig: document.getElementById("toConfig"),
-      instances: document.getElementById("instances"),
-      emptyState: document.getElementById("emptyState"),
+      loginBox: document.getElementById("loginBox"),
+      loginUser: document.getElementById("loginUser"),
+      loginPass: document.getElementById("loginPass"),
+      loginBtn: document.getElementById("loginBtn"),
       panel: document.getElementById("panel"),
-      instanceTitle: document.getElementById("instanceTitle"),
-      lightTopicInput: document.getElementById("lightTopicInput"),
-      lightResponseTopicInput: document.getElementById("lightResponseTopicInput"),
-      lightPayloadFormat: document.getElementById("lightPayloadFormat"),
-      saveRouteBtn: document.getElementById("saveRouteBtn"),
       refreshBtn: document.getElementById("refreshBtn"),
       allOnBtn: document.getElementById("allOnBtn"),
       allOffBtn: document.getElementById("allOffBtn"),
@@ -124,81 +112,41 @@
     }
 
     function slugify(value, fallback) {
-      const out = cleanText(value, fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+      const out = cleanText(value, fallback).toLowerCase().replace(/_/g, "-").replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
       return out || fallback;
-    }
-
-    function defaultLightTopic(instanceId) {
-      return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
-    }
-
-    function defaultLightResponseTopic(instanceId) {
-      return `${state.mqttBaseTopic}/${instanceId}/pub/light`;
-    }
-
-    async function api(path, options = {}) {
-      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      return body;
     }
 
     function forcedInstanceFromUrl() {
       const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "control" && parts[1]) return decodeURIComponent(parts[1]);
       if (parts[0] === "instance" && parts[1]) return decodeURIComponent(parts[1]);
       const q = new URLSearchParams(location.search).get("instance");
       return q || "";
     }
 
-    function renderInstances() {
-      el.instances.innerHTML = "";
-      if (!state.instances.length) {
-        const p = document.createElement("p");
-        p.className = "small";
-        p.textContent = "Nessuna istanza.";
-        el.instances.appendChild(p);
-        return;
-      }
-      for (const item of state.instances) {
-        const box = document.createElement("div");
-        box.className = `instance-item${item.id === state.currentId ? " active" : ""}`;
-        const left = document.createElement("div");
-        const b = document.createElement("button");
-        b.type = "button";
-        b.textContent = item.name;
-        b.onclick = () => loadInstance(item.id);
-        const m = document.createElement("div");
-        m.className = "meta";
-        m.textContent = `${item.id} • ${item.boardsCount} schede`;
-        left.appendChild(b); left.appendChild(m);
-        const cfg = document.createElement("a");
-        cfg.className = "nav";
-        cfg.href = `/instance/${encodeURIComponent(item.id)}/config`;
-        cfg.textContent = "Config";
-        box.appendChild(left);
-        box.appendChild(cfg);
-        el.instances.appendChild(box);
-      }
+    function tokenKey(instanceId) {
+      return `sheltr-token-${instanceId}`;
     }
 
-    function renderPanel() {
-      if (!state.current) {
-        el.emptyState.classList.remove("hidden");
-        el.panel.classList.add("hidden");
-        el.lights.innerHTML = "";
-        return;
+    function setPanelVisible(visible) {
+      el.panel.classList.toggle("hidden", !visible);
+    }
+
+    function setLoginVisible(visible) {
+      el.loginBox.classList.toggle("hidden", !visible);
+    }
+
+    async function api(path, options = {}, useAuth = true) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      if (useAuth && state.token) headers["X-Instance-Token"] = state.token;
+      const res = await fetch(path, { ...options, headers });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(body.error || `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
       }
-      el.emptyState.classList.add("hidden");
-      el.panel.classList.remove("hidden");
-      el.instanceTitle.textContent = `Istanza: ${state.current.name}`;
-      el.toConfig.href = `/instance/${encodeURIComponent(state.current.id)}/config`;
-      const topic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
-      el.lightTopicInput.value = topic;
-      const responseTopic = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopic(state.current.id));
-      el.lightResponseTopicInput.value = responseTopic;
-      const fmt = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
-      el.lightPayloadFormat.value = fmt;
-      renderLights();
+      return body;
     }
 
     function renderLights() {
@@ -214,12 +162,15 @@
       for (const light of state.lights) {
         const card = document.createElement("article");
         card.className = "card";
+
         const h = document.createElement("h3");
         h.textContent = light.name || light.id;
+
         const meta = document.createElement("div");
         meta.className = "meta";
         const upd = light.stateUpdatedAt ? ` • upd ${new Date(light.stateUpdatedAt).toLocaleTimeString("it-IT")}` : "";
         meta.textContent = `${light.room || "Senza stanza"} • ${light.id} • addr ${light.address}${upd}`;
+
         const st = document.createElement("div");
         const on = typeof light.isOn === "boolean" ? light.isOn : null;
         st.className = `state ${on === null ? "unknown" : (on ? "on" : "off")}`;
@@ -245,73 +196,73 @@
       }
     }
 
+    function handleAuthError(err) {
+      if (err && err.status === 401) {
+        state.token = "";
+        localStorage.removeItem(tokenKey(state.instanceId));
+        setPanelVisible(false);
+        setLoginVisible(true);
+        note("Sessione scaduta o non valida. Effettua di nuovo il login.", true);
+        return true;
+      }
+      return false;
+    }
+
     async function loadLights(silent = false) {
-      if (!state.current) return;
+      if (!state.instanceId) return;
       try {
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights`);
+        const res = await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights`);
         state.lights = Array.isArray(res.lights) ? res.lights : [];
-        if (res.commandTopic) el.lightTopicInput.value = res.commandTopic;
-        if (typeof res.responseTopic === "string") el.lightResponseTopicInput.value = res.responseTopic;
-        if (res.payloadFormat) el.lightPayloadFormat.value = res.payloadFormat;
         renderLights();
         if (!silent) note(`Stato aggiornato (${state.lights.length} luci).`);
       } catch (err) {
-        if (!silent) note(err.message, true);
+        if (!handleAuthError(err) && !silent) note(err.message, true);
       }
     }
 
     async function sendLightCommand(light, action) {
-      if (!state.current) return;
+      if (!state.instanceId) return;
       try {
-        const payload = {
-          action,
-          topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
-          responseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
-          payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf"),
-          lightId: light.id,
-          target: {
-            boardId: light.boardId,
-            boardName: light.boardName,
-            address: light.address,
-            channel: light.channel,
-            name: light.name,
-            room: light.room
-          }
-        };
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+        const res = await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`, {
           method: "POST",
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+            action,
+            lightId: light.id,
+            target: {
+              boardId: light.boardId,
+              boardName: light.boardName,
+              address: light.address,
+              channel: light.channel,
+              name: light.name,
+              room: light.room
+            }
+          })
         });
+
         const sent = Array.isArray(res.sent) ? res.sent : [];
         if (sent[0] && typeof sent[0].isOn === "boolean") {
           const idx = state.lights.findIndex((x) => x.id === light.id);
           if (idx >= 0) state.lights[idx].isOn = sent[0].isOn;
           renderLights();
         }
-        const frameHex = sent[0] && sent[0].frameHex ? sent[0].frameHex : "";
+
         const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
         const verified = !!(sent[0] && sent[0].verified);
         const reason = sent[0] && sent[0].verifyReason ? ` (${sent[0].verifyReason})` : "";
-        const verifyText = verified ? " confermato dal dispositivo" : " in attesa conferma dispositivo";
-        note(`Comando '${action}' inviato x${sendCount}${verifyText}${verified ? "" : reason}.${frameHex ? ` Frame: ${frameHex}` : ""}`);
+        note(`Comando '${action}' inviato x${sendCount}${verified ? " confermato dal dispositivo" : ` in attesa conferma${reason}`}.`);
       } catch (err) {
-        note(err.message, true);
+        if (!handleAuthError(err)) note(err.message, true);
       }
     }
 
     async function sendAll(action) {
-      if (!state.current) return;
+      if (!state.instanceId) return;
       try {
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+        const res = await api(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`, {
           method: "POST",
-          body: JSON.stringify({
-            action,
-            all: true,
-            topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
-            responseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
-            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
-          })
+          body: JSON.stringify({ action, all: true })
         });
+
         const sent = Array.isArray(res.sent) ? res.sent : [];
         const byId = new Map(sent.map((x) => [x.id, x]));
         state.lights = state.lights.map((x) => {
@@ -319,79 +270,99 @@
           return m && typeof m.isOn === "boolean" ? { ...x, isOn: m.isOn } : x;
         });
         renderLights();
+
         const sendCount = sent[0] && Number.isFinite(Number(sent[0].sendCount)) ? Number(sent[0].sendCount) : 1;
         const verifiedCount = sent.filter((x) => x && x.verified).length;
-        const unverified = sent.find((x) => x && !x.verified && x.verifyReason);
-        const reason = unverified ? ` Primo errore: ${unverified.verifyReason}` : "";
-        note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce, confermate ${verifiedCount}/${sent.length}).${reason}`);
+        note(`Comando '${action}' inviato a ${sent.length} luci (x${sendCount} per luce, confermate ${verifiedCount}/${sent.length}).`);
       } catch (err) {
-        note(err.message, true);
+        if (!handleAuthError(err)) note(err.message, true);
       }
     }
 
-    async function saveRouting() {
-      if (!state.current) return;
+    function setupPolling() {
+      if (state.pollTimer) window.clearInterval(state.pollTimer);
+      state.pollTimer = window.setInterval(() => {
+        if (!el.panel.classList.contains("hidden")) loadLights(true);
+      }, 7000);
+    }
+
+    async function login() {
+      if (!state.instanceId) return;
       try {
-        const payload = {
-          id: state.current.id,
-          name: state.current.name,
-          protocolVersion: state.current.protocolVersion || "1.6",
-          mqtt: {
-            lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
-            lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
-            lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
-          },
-          boards: state.current.boards || []
-        };
-        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, {
-          method: "PUT",
-          body: JSON.stringify(payload)
-        });
-        state.current = res.instance;
-        note("Topic/formato salvati.");
+        const res = await api(`/api/instances/${encodeURIComponent(state.instanceId)}/auth/login`, {
+          method: "POST",
+          body: JSON.stringify({
+            username: cleanText(el.loginUser.value, ""),
+            password: cleanText(el.loginPass.value, "")
+          })
+        }, false);
+        state.token = cleanText(res.token, "");
+        if (!state.token) throw new Error("Token non valido");
+        localStorage.setItem(tokenKey(state.instanceId), state.token);
+        el.loginPass.value = "";
+        setLoginVisible(false);
+        setPanelVisible(true);
+        await loadLights(false);
+        note("Login eseguito.");
       } catch (err) {
         note(err.message, true);
       }
-    }
-
-    async function loadInstances(preferredId = "") {
-      const res = await api("/api/instances");
-      state.instances = res.instances || [];
-      renderInstances();
-      if (preferredId && state.instances.some((x) => x.id === preferredId)) return loadInstance(preferredId);
-      if (state.currentId && state.instances.some((x) => x.id === state.currentId)) return loadInstance(state.currentId);
-      if (state.instances.length) return loadInstance(state.instances[0].id);
-      state.current = null; state.currentId = null; state.lights = []; renderPanel();
-    }
-
-    async function loadInstance(instanceId) {
-      const id = slugify(instanceId, "dr154-1");
-      const res = await api(`/api/instances/${encodeURIComponent(id)}`);
-      state.current = res.instance;
-      state.currentId = res.instance.id;
-      renderInstances();
-      renderPanel();
-      await loadLights(true);
     }
 
     async function bootstrap() {
-      try {
-        const meta = await api("/api/meta");
-        state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
-      } catch (_) {
-        state.mqttBaseTopic = "dr154";
+      const forcedId = slugify(forcedInstanceFromUrl(), "");
+      if (!forcedId) {
+        note("Istanza non specificata. Apri un URL tipo /control/casa-demo", true);
+        setLoginVisible(false);
+        setPanelVisible(false);
+        return;
       }
-      await loadInstances(slugify(forcedInstanceFromUrl(), ""));
-      note("Pronto.");
-      window.setInterval(() => loadLights(true), 7000);
+
+      state.instanceId = forcedId;
+      try {
+        const res = await api(`/api/instances/${encodeURIComponent(state.instanceId)}`, {}, false);
+        state.instance = res.instance;
+        state.instanceId = state.instance.id;
+        state.authRequired = !!(state.instance?.auth?.passwordConfigured);
+
+        const title = `${state.instance.name} / Sheltr Cloud`;
+        el.title.textContent = title;
+        document.title = title;
+        el.toConfig.href = `/config?instance=${encodeURIComponent(state.instance.id)}`;
+
+        if (state.authRequired) {
+          el.loginUser.value = cleanText(state.instance?.auth?.username, "");
+          state.token = cleanText(localStorage.getItem(tokenKey(state.instance.id)), "");
+          if (!state.token) {
+            setLoginVisible(true);
+            setPanelVisible(false);
+            note("Login richiesto per questa istanza.");
+          } else {
+            setLoginVisible(false);
+            setPanelVisible(true);
+            await loadLights(false);
+          }
+        } else {
+          setLoginVisible(false);
+          setPanelVisible(true);
+          await loadLights(false);
+        }
+
+        setupPolling();
+      } catch (err) {
+        note(err.message, true);
+        setLoginVisible(false);
+        setPanelVisible(false);
+      }
     }
 
+    el.loginBtn.addEventListener("click", login);
+    el.loginPass.addEventListener("keydown", (ev) => { if (ev.key === "Enter") login(); });
     el.refreshBtn.addEventListener("click", () => loadLights(false));
     el.allOnBtn.addEventListener("click", () => sendAll("on"));
     el.allOffBtn.addEventListener("click", () => sendAll("off"));
-    el.saveRouteBtn.addEventListener("click", saveRouting);
 
-    bootstrap().catch((err) => note(err.message, true));
+    bootstrap();
   </script>
 </body>
 </html>

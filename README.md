@@ -18,7 +18,7 @@ docker compose up -d --build
 
 ## Endpoint esposti
 
-- Web UI controllo: `http://<HOST>:8080/control`
+- Web UI controllo istanza: `http://<HOST>:8080/control/<istanza>`
 - Web UI configurazione: `http://<HOST>:8080/config`
 - MQTT TCP: `<HOST>:1883`
 - MQTT WebSocket: `ws://<HOST>:9001`
@@ -38,15 +38,16 @@ MQTT_PASSWORD=filippo1994
 ## Uso della UI
 
 1. Crea una nuova istanza DR154 (es. `dr154-villa`).
-2. Apri l'istanza.
+2. Apri l'istanza dalla pagina config.
 3. Aggiungi le schede (`light`, `shutter`, `dimmer`, `thermostat`).
 4. Imposta indirizzo, range canali, nome canale e stanza.
-5. Salva.
-6. Premi `Pubblica su MQTT` per inviare la configurazione.
-7. Usa `Controllo Luci` per inviare comandi realtime ai canali luce.
-8. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
-9. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
-10. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
+5. Imposta login per istanza (`username` e `password`) nella pagina config.
+6. Salva.
+7. Premi `Pubblica su MQTT` per inviare la configurazione.
+8. Apri il controllo dedicato su `/control/<istanza>`.
+9. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
+10. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
+11. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
 
 Topic di default per la configurazione:
 
@@ -101,6 +102,8 @@ Per ridurre i comandi persi in rete:
   - `MQTT_RESPONSE_RETRIES=1`
   - `MQTT_RESPONSE_RETRY_DELAY_MS=140`
   - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il comando fallisce senza conferma)
+- sessione login per istanza:
+  - `INSTANCE_AUTH_TTL_SEC=43200`
 
 Nota: le azioni supportate per le luci sono `on` e `off`.
 
