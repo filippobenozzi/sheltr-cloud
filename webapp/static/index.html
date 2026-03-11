@@ -169,6 +169,45 @@
       flex-wrap: wrap;
       margin-top: 14px;
     }
+    .lights-box {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 12px;
+    }
+    .lights-grid {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+    }
+    .light-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fffefb;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+    }
+    .light-title {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .light-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .light-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .light-actions button {
+      min-width: 58px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
     #message {
       margin-top: 14px;
       min-height: 24px;
@@ -236,6 +275,10 @@
             <input id="topicInput" placeholder="dr154/<istanza>/config">
           </label>
           <label>
+            Topic comandi luci MQTT
+            <input id="lightTopicInput" placeholder="dr154/<istanza>/cmd/light">
+          </label>
+          <label>
             Versione protocollo
             <input id="protocolVersion" value="1.6" readonly>
           </label>
@@ -250,6 +293,16 @@
         </div>
 
         <div id="boards"></div>
+
+        <div class="lights-box">
+          <h3>Controllo Luci</h3>
+          <p class="small">Comandi MQTT realtime sui canali di tipo luce.</p>
+          <div class="actions">
+            <button id="refreshLightsBtn" type="button">Aggiorna luci</button>
+            <button id="allLightsOffBtn" class="secondary" type="button">Spegni tutte</button>
+          </div>
+          <div id="lightsGrid" class="lights-grid"></div>
+        </div>
 
         <div class="actions">
           <button id="saveBtn" class="primary" type="button">Salva configurazione</button>
@@ -273,7 +326,8 @@
       instances: [],
       current: null,
       currentId: null,
-      mqttBaseTopic: "dr154"
+      mqttBaseTopic: "dr154",
+      lights: []
     };
 
     const el = {
@@ -288,10 +342,14 @@
       instanceLink: document.getElementById("instanceLink"),
       instanceName: document.getElementById("instanceName"),
       topicInput: document.getElementById("topicInput"),
+      lightTopicInput: document.getElementById("lightTopicInput"),
       protocolVersion: document.getElementById("protocolVersion"),
       boardsCount: document.getElementById("boardsCount"),
       addBoard: document.getElementById("addBoard"),
       boards: document.getElementById("boards"),
+      lightsGrid: document.getElementById("lightsGrid"),
+      refreshLightsBtn: document.getElementById("refreshLightsBtn"),
+      allLightsOffBtn: document.getElementById("allLightsOffBtn"),
       saveBtn: document.getElementById("saveBtn"),
       publishBtn: document.getElementById("publishBtn"),
       deleteBtn: document.getElementById("deleteBtn"),
@@ -327,6 +385,37 @@
 
     function defaultChannelName(kind, channel) {
       return `${KIND_META[kind]?.prefix || "Canale"} ${channel}`;
+    }
+
+    function defaultLightCommandTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
+    }
+
+    function extractLightsFromCurrent() {
+      const out = [];
+      if (!state.current || !Array.isArray(state.current.boards)) return out;
+
+      for (const board of state.current.boards) {
+        if (!board || board.kind !== "light") continue;
+        const boardId = cleanText(board.id, "board-1");
+        const boardName = cleanText(board.name, boardId);
+        const address = clamp(toInt(board.address, 0), 0, 254);
+        for (const channelData of Array.isArray(board.channels) ? board.channels : []) {
+          const channel = clamp(toInt(channelData?.channel, -1), 1, 8);
+          out.push({
+            id: `${boardId}-c${channel}`,
+            boardId,
+            boardName,
+            address,
+            channel,
+            name: cleanText(channelData?.name, defaultChannelName("light", channel)),
+            room: cleanText(channelData?.room, "Senza stanza")
+          });
+        }
+      }
+
+      out.sort((a, b) => `${a.room} ${a.name}`.localeCompare(`${b.room} ${b.name}`, "it", { sensitivity: "base" }));
+      return out;
     }
 
     function normalizeBoard(raw, index) {
@@ -425,6 +514,8 @@
         el.emptyState.classList.remove("hidden");
         el.editorState.classList.add("hidden");
         el.boards.innerHTML = "";
+        el.lightsGrid.innerHTML = "";
+        state.lights = [];
         return;
       }
 
@@ -437,6 +528,8 @@
       el.instanceName.value = state.current.name;
       el.protocolVersion.value = state.current.protocolVersion || "1.6";
       el.topicInput.value = `${state.mqttBaseTopic}/${state.current.id}/config`;
+      const savedLightTopic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightCommandTopic(state.current.id));
+      el.lightTopicInput.value = savedLightTopic;
       el.boardsCount.value = String(state.current.boards.length);
       renderBoards();
     }
@@ -483,6 +576,7 @@
         empty.className = "empty";
         empty.textContent = "Nessuna scheda. Premi 'Aggiungi scheda'.";
         el.boards.appendChild(empty);
+        renderLights();
         return;
       }
 
@@ -597,6 +691,50 @@
         card.appendChild(channelsWrap);
         el.boards.appendChild(card);
       });
+
+      renderLights();
+    }
+
+    function renderLights() {
+      el.lightsGrid.innerHTML = "";
+      const lights = extractLightsFromCurrent();
+      state.lights = lights;
+
+      if (!lights.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Nessuna luce configurata. Aggiungi una scheda di tipo 'Luci'.";
+        el.lightsGrid.appendChild(empty);
+        return;
+      }
+
+      for (const light of lights) {
+        const card = document.createElement("article");
+        card.className = "light-card";
+
+        const title = document.createElement("div");
+        title.className = "light-title";
+        title.textContent = light.name;
+        card.appendChild(title);
+
+        const meta = document.createElement("div");
+        meta.className = "light-meta";
+        meta.textContent = `${light.room} • ${light.id} • addr ${light.address}`;
+        card.appendChild(meta);
+
+        const actions = document.createElement("div");
+        actions.className = "light-actions";
+        for (const action of ["on", "off", "toggle"]) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = action.toUpperCase();
+          btn.onclick = () => sendLightCommand(light, action);
+          actions.appendChild(btn);
+        }
+        card.appendChild(actions);
+
+        el.lightsGrid.appendChild(card);
+      }
     }
 
     async function loadInstances(preferredId = "") {
@@ -649,10 +787,14 @@
     function currentPayload() {
       if (!state.current) return null;
       normalizeCurrentBoards();
+      const lightCommandTopic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
       return {
         id: state.current.id,
         name: cleanText(el.instanceName.value, state.current.id),
         protocolVersion: "1.6",
+        mqtt: {
+          lightCommandTopic
+        },
         boards: state.current.boards
       };
     }
@@ -694,6 +836,54 @@
       }
     }
 
+    async function sendLightCommand(light, action) {
+      if (!state.current) return;
+      try {
+        const topic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
+        const payload = {
+          action,
+          topic,
+          lightId: light.id,
+          target: {
+            boardId: light.boardId,
+            boardName: light.boardName,
+            address: light.address,
+            channel: light.channel,
+            name: light.name,
+            room: light.room
+          }
+        };
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        note(`Comando '${action}' inviato a ${light.name} su topic '${res.topic}'.`);
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    async function lightsAllOff() {
+      if (!state.current) return;
+      try {
+        const topic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+          method: "POST",
+          body: JSON.stringify({ action: "off", all: true, topic })
+        });
+        const count = Array.isArray(res.sent) ? res.sent.length : 0;
+        note(`Comando OFF inviato a ${count} luci su topic '${res.topic}'.`);
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    async function refreshLightsWithFeedback() {
+      if (!state.current) return;
+      renderLights();
+      note(`Luci ricaricate: ${state.lights.length} canali.`);
+    }
+
     async function deleteCurrent() {
       if (!state.current) return;
       const ok = window.confirm(`Eliminare l'istanza '${state.current.id}'?`);
@@ -730,6 +920,8 @@
 
     el.createForm.addEventListener("submit", createInstance);
     el.addBoard.addEventListener("click", addBoard);
+    el.refreshLightsBtn.addEventListener("click", refreshLightsWithFeedback);
+    el.allLightsOffBtn.addEventListener("click", lightsAllOff);
     el.saveBtn.addEventListener("click", saveCurrentWithFeedback);
     el.publishBtn.addEventListener("click", publishCurrent);
     el.deleteBtn.addEventListener("click", deleteCurrent);

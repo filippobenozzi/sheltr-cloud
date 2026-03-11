@@ -19,7 +19,9 @@ MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "filippo")
 MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "filippo1994")
 MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "dr154").strip("/") or "dr154"
-MQTT_PUBLISH_QOS = max(0, min(2, int(os.environ.get("MQTT_PUBLISH_QOS", "1"))))
+MQTT_CONFIG_QOS = max(0, min(2, int(os.environ.get("MQTT_CONFIG_QOS", "1"))))
+MQTT_COMMAND_QOS = max(0, min(2, int(os.environ.get("MQTT_COMMAND_QOS", "1"))))
+LIGHT_COMMAND_ACTIONS = {"on", "off", "toggle"}
 
 KIND_META = {
     "light": {"label": "Luci", "maxChannels": 8, "channelPrefix": "Luce"},
@@ -119,6 +121,8 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
     instance_name = clean_text(payload.get("name"), instance_id)
     boards_raw = payload.get("boards")
     boards_input = boards_raw if isinstance(boards_raw, list) else []
+    mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
+    light_command_topic = clean_text(mqtt_in.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
 
     boards = [normalize_board(item, idx) for idx, item in enumerate(boards_input[:64])]
     if not boards:
@@ -129,6 +133,9 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
         "name": instance_name,
         "protocolVersion": "1.6",
         "boards": boards,
+        "mqtt": {
+            "lightCommandTopic": light_command_topic,
+        },
         "updatedAt": now_iso(),
     }
 
@@ -165,7 +172,7 @@ def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | N
     return None
 
 
-def mqtt_publish(topic: str, payload: dict[str, Any]) -> None:
+def mqtt_publish(topic: str, payload: dict[str, Any], *, qos: int, retain: bool) -> None:
     raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     client_id = f"iotsheltr-{os.getpid()}-{int(datetime.now().timestamp())}"
     client = mqtt.Client(
@@ -175,11 +182,45 @@ def mqtt_publish(topic: str, payload: dict[str, Any]) -> None:
     )
     client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-    result = client.publish(topic, raw_payload.encode("utf-8"), qos=MQTT_PUBLISH_QOS, retain=True)
+    result = client.publish(topic, raw_payload.encode("utf-8"), qos=qos, retain=retain)
     result.wait_for_publish(timeout=5)
     if not result.is_published():
         raise RuntimeError("Timeout pubblicazione MQTT")
     client.disconnect()
+
+
+def get_light_command_topic(instance: dict[str, Any]) -> str:
+    instance_id = clean_text(instance.get("id"), "dr154-1")
+    mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
+    return clean_text(mqtt_cfg.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
+
+
+def light_entities(instance: dict[str, Any]) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
+    for board in instance.get("boards", []):
+        if not isinstance(board, dict) or board.get("kind") != "light":
+            continue
+        board_id = clean_text(board.get("id"), "board-1")
+        board_name = clean_text(board.get("name"), board_id)
+        address = clamp(to_int(board.get("address"), 0), 0, 254)
+        for channel_data in board.get("channels", []):
+            if not isinstance(channel_data, dict):
+                continue
+            channel = clamp(to_int(channel_data.get("channel"), -1), 1, 8)
+            light_id = f"{board_id}-c{channel}"
+            entities.append(
+                {
+                    "id": light_id,
+                    "boardId": board_id,
+                    "boardName": board_name,
+                    "address": address,
+                    "channel": channel,
+                    "name": clean_text(channel_data.get("name"), default_channel_name("light", channel)),
+                    "room": clean_text(channel_data.get("room"), "Senza stanza"),
+                }
+            )
+    entities.sort(key=lambda item: (str(item.get("room", "")).lower(), str(item.get("name", "")).lower()))
+    return entities
 
 
 def list_view(instance: dict[str, Any]) -> dict[str, Any]:
@@ -214,7 +255,14 @@ def healthz():
 
 @app.get("/api/meta")
 def api_meta():
-    return jsonify({"kindMeta": KIND_META, "mqttBaseTopic": MQTT_BASE_TOPIC})
+    return jsonify(
+        {
+            "kindMeta": KIND_META,
+            "mqttBaseTopic": MQTT_BASE_TOPIC,
+            "mqttConfigQos": MQTT_CONFIG_QOS,
+            "mqttCommandQos": MQTT_COMMAND_QOS,
+        }
+    )
 
 
 @app.get("/api/instances")
@@ -302,11 +350,108 @@ def api_publish_instance(instance_id: str):
         return err("Topic MQTT non valido", 400)
 
     try:
-        mqtt_publish(topic, instance)
+        mqtt_publish(topic, instance, qos=MQTT_CONFIG_QOS, retain=True)
     except Exception as exc:  # noqa: BLE001
         return err(f"Errore pubblicazione MQTT: {exc}", 502)
 
-    return jsonify({"ok": True, "topic": topic, "qos": MQTT_PUBLISH_QOS, "retain": True})
+    return jsonify({"ok": True, "topic": topic, "qos": MQTT_CONFIG_QOS, "retain": True})
+
+
+@app.get("/api/instances/<instance_id>/lights")
+def api_list_lights(instance_id: str):
+    normalized_id = slugify(instance_id, "dr154-1")
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, normalized_id)
+    if instance is None:
+        return err("Istanza non trovata", 404)
+
+    return jsonify(
+        {
+            "instanceId": normalized_id,
+            "commandTopic": get_light_command_topic(instance),
+            "lights": light_entities(instance),
+        }
+    )
+
+
+@app.post("/api/instances/<instance_id>/lights/command")
+def api_light_command(instance_id: str):
+    normalized_id = slugify(instance_id, "dr154-1")
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, normalized_id)
+    if instance is None:
+        return err("Istanza non trovata", 404)
+
+    body = request.get_json(silent=True) or {}
+    action = clean_text(body.get("action"), "").lower()
+    if action not in LIGHT_COMMAND_ACTIONS:
+        allowed = ",".join(sorted(LIGHT_COMMAND_ACTIONS))
+        return err(f"Azione luce non valida. Valori ammessi: {allowed}", 400)
+
+    topic = clean_text(body.get("topic"), get_light_command_topic(instance))
+    if not topic:
+        return err("Topic MQTT non valido", 400)
+
+    entities = light_entities(instance)
+    light_id = clean_text(body.get("lightId"), "")
+    all_lights = bool(body.get("all"))
+    targets: list[dict[str, Any]] = []
+    if all_lights:
+        if not entities:
+            return err("Nessuna luce configurata", 400)
+        targets = entities
+    elif light_id:
+        targets = [item for item in entities if item.get("id") == light_id]
+        if not targets:
+            target_in = body.get("target") if isinstance(body.get("target"), dict) else {}
+            raw_channel = to_int(target_in.get("channel"), -1)
+            if raw_channel < 1 or raw_channel > 8:
+                return err("Luce non trovata", 404)
+            board_id = clean_text(target_in.get("boardId"), light_id.split("-c", 1)[0] or "board-1")
+            address = clamp(to_int(target_in.get("address"), 0), 0, 254)
+            targets = [
+                {
+                    "id": light_id,
+                    "boardId": board_id,
+                    "boardName": clean_text(target_in.get("boardName"), board_id),
+                    "address": address,
+                    "channel": raw_channel,
+                    "name": clean_text(target_in.get("name"), default_channel_name("light", raw_channel)),
+                    "room": clean_text(target_in.get("room"), "Senza stanza"),
+                }
+            ]
+    else:
+        return err("Specifica 'lightId' oppure imposta 'all=true'", 400)
+
+    sent: list[dict[str, Any]] = []
+    for entity in targets:
+        payload = {
+            "type": "light_command",
+            "instanceId": normalized_id,
+            "lightId": entity["id"],
+            "boardId": entity["boardId"],
+            "address": entity["address"],
+            "channel": entity["channel"],
+            "action": action,
+            "sentAt": now_iso(),
+        }
+        try:
+            mqtt_publish(topic, payload, qos=MQTT_COMMAND_QOS, retain=False)
+        except Exception as exc:  # noqa: BLE001
+            return err(f"Errore pubblicazione comando luce: {exc}", 502)
+        sent.append({"id": entity["id"], "action": action})
+
+    return jsonify(
+        {
+            "ok": True,
+            "topic": topic,
+            "qos": MQTT_COMMAND_QOS,
+            "retain": False,
+            "sent": sent,
+        }
+    )
 
 
 if __name__ == "__main__":
