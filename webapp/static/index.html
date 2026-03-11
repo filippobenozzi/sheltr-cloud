@@ -544,7 +544,7 @@
       el.topicInput.value = `${state.mqttBaseTopic}/${state.current.id}/config`;
       const savedLightTopic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightCommandTopic(state.current.id));
       el.lightTopicInput.value = savedLightTopic;
-      const savedPayloadFormat = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space");
+      const savedPayloadFormat = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
       el.lightPayloadFormat.value = [
         "frame_hex_space",
         "frame_hex_compact",
@@ -554,7 +554,7 @@
         "json"
       ].includes(savedPayloadFormat)
         ? savedPayloadFormat
-        : "frame_hex_space";
+        : "frame_hex_space_crlf";
       el.boardsCount.value = String(state.current.boards.length);
       renderBoards();
     }
@@ -813,7 +813,7 @@
       if (!state.current) return null;
       normalizeCurrentBoards();
       const lightCommandTopic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
-      const lightPayloadFormat = cleanText(el.lightPayloadFormat.value, "frame_hex_space");
+      const lightPayloadFormat = cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf");
       return {
         id: state.current.id,
         name: cleanText(el.instanceName.value, state.current.id),
@@ -870,7 +870,7 @@
         const payload = {
           action,
           topic,
-          payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space"),
+          payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf"),
           lightId: light.id,
           target: {
             boardId: light.boardId,
@@ -902,7 +902,7 @@
             action: "off",
             all: true,
             topic,
-            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space")
+            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
           })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;
@@ -922,7 +922,7 @@
             action: "on",
             all: true,
             topic,
-            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space")
+            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
           })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;

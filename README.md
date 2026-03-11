@@ -64,9 +64,9 @@ Nota: non usare la slash iniziale (`/`).
 
 Formati payload supportati per i comandi luce:
 
-- `frame_hex_space` (default): es. `49 01 51 41 00 00 00 00 00 00 00 00 00 46`
+- `frame_hex_space`: es. `49 01 51 41 00 00 00 00 00 00 00 00 00 46`
 - `frame_hex_compact`: es. `4901514100000000000000000046`
-- `frame_hex_space_crlf`: come sopra + terminatore `\r\n`
+- `frame_hex_space_crlf` (consigliato per DR154 transparent): come sopra + terminatore `\r\n`
 - `frame_hex_compact_crlf`: come sopra + terminatore `\r\n`
 - `frame_bytes`: invio bytes raw del frame protocollo
 - `json`: payload JSON applicativo

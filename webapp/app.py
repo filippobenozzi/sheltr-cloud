@@ -145,7 +145,7 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
     boards_input = boards_raw if isinstance(boards_raw, list) else []
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     light_command_topic = clean_text(mqtt_in.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
-    light_payload_format = clean_text(mqtt_in.get("lightPayloadFormat"), "frame_hex_space").lower()
+    light_payload_format = clean_text(mqtt_in.get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
     if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
         light_payload_format = "frame_hex_space"
 
@@ -243,8 +243,8 @@ def get_light_command_topic(instance: dict[str, Any]) -> str:
 
 def get_light_payload_format(instance: dict[str, Any]) -> str:
     mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
-    fmt = clean_text(mqtt_cfg.get("lightPayloadFormat"), "frame_hex_space").lower()
-    return fmt if fmt in LIGHT_PAYLOAD_FORMATS else "frame_hex_space"
+    fmt = clean_text(mqtt_cfg.get("lightPayloadFormat"), "frame_hex_space_crlf").lower()
+    return fmt if fmt in LIGHT_PAYLOAD_FORMATS else "frame_hex_space_crlf"
 
 
 def build_protocol_frame(address: int, command: int, g_bytes: list[int]) -> bytes:
