@@ -22,6 +22,21 @@ MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "dr154").strip("/") or "dr15
 MQTT_CONFIG_QOS = max(0, min(2, int(os.environ.get("MQTT_CONFIG_QOS", "1"))))
 MQTT_COMMAND_QOS = max(0, min(2, int(os.environ.get("MQTT_COMMAND_QOS", "1"))))
 LIGHT_COMMAND_ACTIONS = {"on", "off", "toggle"}
+LIGHT_PAYLOAD_FORMATS = {"json", "frame_hex_space", "frame_hex_compact", "frame_bytes"}
+LIGHT_RELAY_COMMANDS = {
+    1: 0x51,
+    2: 0x52,
+    3: 0x53,
+    4: 0x54,
+    5: 0x65,
+    6: 0x66,
+    7: 0x67,
+    8: 0x68,
+}
+LIGHT_ACTION_CODES = {"on": 0x41, "off": 0x53, "toggle": 0x55}
+FRAME_START = 0x49
+FRAME_END = 0x46
+FRAME_LEN = 14
 
 KIND_META = {
     "light": {"label": "Luci", "maxChannels": 8, "channelPrefix": "Luce"},
@@ -123,6 +138,9 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
     boards_input = boards_raw if isinstance(boards_raw, list) else []
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     light_command_topic = clean_text(mqtt_in.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
+    light_payload_format = clean_text(mqtt_in.get("lightPayloadFormat"), "frame_hex_space").lower()
+    if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
+        light_payload_format = "frame_hex_space"
 
     boards = [normalize_board(item, idx) for idx, item in enumerate(boards_input[:64])]
     if not boards:
@@ -135,6 +153,7 @@ def normalize_instance(raw: Any, fallback_id: str) -> dict[str, Any]:
         "boards": boards,
         "mqtt": {
             "lightCommandTopic": light_command_topic,
+            "lightPayloadFormat": light_payload_format,
         },
         "updatedAt": now_iso(),
     }
@@ -172,8 +191,13 @@ def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | N
     return None
 
 
-def mqtt_publish(topic: str, payload: dict[str, Any], *, qos: int, retain: bool) -> None:
-    raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+def mqtt_publish(topic: str, payload: Any, *, qos: int, retain: bool) -> None:
+    if isinstance(payload, (bytes, bytearray)):
+        raw_payload = bytes(payload)
+    elif isinstance(payload, dict):
+        raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    else:
+        raw_payload = str(payload).encode("utf-8")
     client_id = f"iotsheltr-{os.getpid()}-{int(datetime.now().timestamp())}"
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -182,7 +206,7 @@ def mqtt_publish(topic: str, payload: dict[str, Any], *, qos: int, retain: bool)
     )
     client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-    result = client.publish(topic, raw_payload.encode("utf-8"), qos=qos, retain=retain)
+    result = client.publish(topic, raw_payload, qos=qos, retain=retain)
     result.wait_for_publish(timeout=5)
     if not result.is_published():
         raise RuntimeError("Timeout pubblicazione MQTT")
@@ -193,6 +217,66 @@ def get_light_command_topic(instance: dict[str, Any]) -> str:
     instance_id = clean_text(instance.get("id"), "dr154-1")
     mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
     return clean_text(mqtt_cfg.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light")
+
+
+def get_light_payload_format(instance: dict[str, Any]) -> str:
+    mqtt_cfg = instance.get("mqtt") if isinstance(instance.get("mqtt"), dict) else {}
+    fmt = clean_text(mqtt_cfg.get("lightPayloadFormat"), "frame_hex_space").lower()
+    return fmt if fmt in LIGHT_PAYLOAD_FORMATS else "frame_hex_space"
+
+
+def build_protocol_frame(address: int, command: int, g_bytes: list[int]) -> bytes:
+    packet = bytearray([0] * FRAME_LEN)
+    packet[0] = FRAME_START
+    packet[1] = clamp(to_int(address, 1), 0, 254)
+    packet[2] = command & 0xFF
+    for idx in range(10):
+        packet[3 + idx] = (g_bytes[idx] if idx < len(g_bytes) else 0) & 0xFF
+    packet[13] = FRAME_END
+    return bytes(packet)
+
+
+def frame_to_hex(frame: bytes, compact: bool = False) -> str:
+    if compact:
+        return "".join(f"{byte:02X}" for byte in frame)
+    return " ".join(f"{byte:02X}" for byte in frame)
+
+
+def light_payload_for_target(
+    *,
+    instance_id: str,
+    target: dict[str, Any],
+    action: str,
+    payload_format: str,
+) -> tuple[Any, str | None]:
+    if payload_format == "json":
+        return (
+            {
+                "type": "light_command",
+                "instanceId": instance_id,
+                "lightId": target["id"],
+                "boardId": target["boardId"],
+                "address": target["address"],
+                "channel": target["channel"],
+                "action": action,
+                "sentAt": now_iso(),
+            },
+            None,
+        )
+
+    relay_command = LIGHT_RELAY_COMMANDS.get(clamp(to_int(target.get("channel"), 1), 1, 8))
+    action_code = LIGHT_ACTION_CODES.get(action)
+    if relay_command is None or action_code is None:
+        raise ValueError("Canale o azione non validi per frame protocollo")
+
+    frame = build_protocol_frame(clamp(to_int(target.get("address"), 1), 0, 254), relay_command, [action_code])
+    frame_hex_spaced = frame_to_hex(frame, compact=False)
+
+    if payload_format == "frame_bytes":
+        return frame, frame_hex_spaced
+    if payload_format == "frame_hex_compact":
+        return frame_to_hex(frame, compact=True), frame_hex_spaced
+    return frame_hex_spaced, frame_hex_spaced
 
 
 def light_entities(instance: dict[str, Any]) -> list[dict[str, Any]]:
@@ -261,6 +345,7 @@ def api_meta():
             "mqttBaseTopic": MQTT_BASE_TOPIC,
             "mqttConfigQos": MQTT_CONFIG_QOS,
             "mqttCommandQos": MQTT_COMMAND_QOS,
+            "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
     )
 
@@ -370,6 +455,7 @@ def api_list_lights(instance_id: str):
         {
             "instanceId": normalized_id,
             "commandTopic": get_light_command_topic(instance),
+            "payloadFormat": get_light_payload_format(instance),
             "lights": light_entities(instance),
         }
     )
@@ -393,6 +479,9 @@ def api_light_command(instance_id: str):
     topic = clean_text(body.get("topic"), get_light_command_topic(instance))
     if not topic:
         return err("Topic MQTT non valido", 400)
+    payload_format = clean_text(body.get("payloadFormat"), get_light_payload_format(instance)).lower()
+    if payload_format not in LIGHT_PAYLOAD_FORMATS:
+        return err("Formato payload non valido", 400)
 
     entities = light_entities(instance)
     light_id = clean_text(body.get("lightId"), "")
@@ -427,26 +516,33 @@ def api_light_command(instance_id: str):
 
     sent: list[dict[str, Any]] = []
     for entity in targets:
-        payload = {
-            "type": "light_command",
-            "instanceId": normalized_id,
-            "lightId": entity["id"],
-            "boardId": entity["boardId"],
-            "address": entity["address"],
-            "channel": entity["channel"],
-            "action": action,
-            "sentAt": now_iso(),
-        }
+        try:
+            payload, frame_hex = light_payload_for_target(
+                instance_id=normalized_id,
+                target=entity,
+                action=action,
+                payload_format=payload_format,
+            )
+        except ValueError as exc:
+            return err(str(exc), 400)
         try:
             mqtt_publish(topic, payload, qos=MQTT_COMMAND_QOS, retain=False)
         except Exception as exc:  # noqa: BLE001
             return err(f"Errore pubblicazione comando luce: {exc}", 502)
-        sent.append({"id": entity["id"], "action": action})
+        item = {"id": entity["id"], "action": action}
+        if frame_hex:
+            item["frameHex"] = frame_hex
+        if isinstance(payload, (bytes, bytearray)):
+            item["payloadBytesHex"] = payload.hex().upper()
+        elif isinstance(payload, str):
+            item["payload"] = payload
+        sent.append(item)
 
     return jsonify(
         {
             "ok": True,
             "topic": topic,
+            "payloadFormat": payload_format,
             "qos": MQTT_COMMAND_QOS,
             "retain": False,
             "sent": sent,

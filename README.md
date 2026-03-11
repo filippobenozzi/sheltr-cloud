@@ -43,6 +43,7 @@ MQTT_PASSWORD=filippo1994
 5. Salva.
 6. Premi `Pubblica su MQTT` per inviare la configurazione.
 7. Usa `Controllo Luci` per inviare comandi realtime ai canali luce.
+8. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
 
 Topic di default per la configurazione:
 
@@ -57,6 +58,13 @@ Topic default comandi luci:
 ```text
 dr154/<istanza>/cmd/light
 ```
+
+Formati payload supportati per i comandi luce:
+
+- `frame_hex_space` (default): es. `49 01 51 41 00 00 00 00 00 00 00 00 00 46`
+- `frame_hex_compact`: es. `4901514100000000000000000046`
+- `frame_bytes`: invio bytes raw del frame protocollo
+- `json`: payload JSON applicativo
 
 ## Note esposizione Internet
 

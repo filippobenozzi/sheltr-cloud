@@ -279,6 +279,15 @@
             <input id="lightTopicInput" placeholder="dr154/<istanza>/cmd/light">
           </label>
           <label>
+            Formato payload luci
+            <select id="lightPayloadFormat">
+              <option value="frame_hex_space">Frame HEX con spazi</option>
+              <option value="frame_hex_compact">Frame HEX compatto</option>
+              <option value="frame_bytes">Frame bytes raw</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label>
             Versione protocollo
             <input id="protocolVersion" value="1.6" readonly>
           </label>
@@ -344,6 +353,7 @@
       instanceName: document.getElementById("instanceName"),
       topicInput: document.getElementById("topicInput"),
       lightTopicInput: document.getElementById("lightTopicInput"),
+      lightPayloadFormat: document.getElementById("lightPayloadFormat"),
       protocolVersion: document.getElementById("protocolVersion"),
       boardsCount: document.getElementById("boardsCount"),
       addBoard: document.getElementById("addBoard"),
@@ -532,6 +542,10 @@
       el.topicInput.value = `${state.mqttBaseTopic}/${state.current.id}/config`;
       const savedLightTopic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightCommandTopic(state.current.id));
       el.lightTopicInput.value = savedLightTopic;
+      const savedPayloadFormat = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space");
+      el.lightPayloadFormat.value = ["frame_hex_space", "frame_hex_compact", "frame_bytes", "json"].includes(savedPayloadFormat)
+        ? savedPayloadFormat
+        : "frame_hex_space";
       el.boardsCount.value = String(state.current.boards.length);
       renderBoards();
     }
@@ -790,12 +804,14 @@
       if (!state.current) return null;
       normalizeCurrentBoards();
       const lightCommandTopic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
+      const lightPayloadFormat = cleanText(el.lightPayloadFormat.value, "frame_hex_space");
       return {
         id: state.current.id,
         name: cleanText(el.instanceName.value, state.current.id),
         protocolVersion: "1.6",
         mqtt: {
-          lightCommandTopic
+          lightCommandTopic,
+          lightPayloadFormat
         },
         boards: state.current.boards
       };
@@ -845,6 +861,7 @@
         const payload = {
           action,
           topic,
+          payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space"),
           lightId: light.id,
           target: {
             boardId: light.boardId,
@@ -859,7 +876,8 @@
           method: "POST",
           body: JSON.stringify(payload)
         });
-        note(`Comando '${action}' inviato a ${light.name} su topic '${res.topic}'.`);
+        const frameHex = Array.isArray(res.sent) && res.sent[0] ? res.sent[0].frameHex : "";
+        note(`Comando '${action}' inviato a ${light.name} su topic '${res.topic}'.${frameHex ? ` Frame: ${frameHex}` : ""}`);
       } catch (error) {
         note(error.message, true);
       }
@@ -871,7 +889,12 @@
         const topic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
         const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
           method: "POST",
-          body: JSON.stringify({ action: "off", all: true, topic })
+          body: JSON.stringify({
+            action: "off",
+            all: true,
+            topic,
+            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space")
+          })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;
         note(`Comando OFF inviato a ${count} luci su topic '${res.topic}'.`);
@@ -886,7 +909,12 @@
         const topic = cleanText(el.lightTopicInput.value, defaultLightCommandTopic(state.current.id));
         const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
           method: "POST",
-          body: JSON.stringify({ action: "on", all: true, topic })
+          body: JSON.stringify({
+            action: "on",
+            all: true,
+            topic,
+            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space")
+          })
         });
         const count = Array.isArray(res.sent) ? res.sent.length : 0;
         note(`Comando ON inviato a ${count} luci su topic '${res.topic}'.`);
