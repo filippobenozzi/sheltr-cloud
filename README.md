@@ -7,6 +7,8 @@ Stack Docker per:
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
 - interfaccia comando luci (`ON/OFF`) via MQTT
+- controllo luci raggruppato per stanze
+- profili orari luci (fasce orarie + giorni) da interfaccia controllo
 - pubblicazione configurazione su MQTT (retain)
 
 ## Avvio rapido
@@ -48,6 +50,8 @@ MQTT_PASSWORD=filippo1994
 9. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
 10. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
 11. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
+12. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
+13. Su ogni card luce puoi usare `⚙` per impostare il profilo orario.
 
 Topic di default per la configurazione:
 
@@ -102,8 +106,11 @@ Per ridurre i comandi persi in rete:
   - `MQTT_RESPONSE_RETRIES=1`
   - `MQTT_RESPONSE_RETRY_DELAY_MS=140`
   - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il comando fallisce senza conferma)
+- loop profili orari luci:
+  - `LIGHT_PROFILE_LOOP_INTERVAL_SEC=20`
 - sessione login per istanza:
   - `INSTANCE_AUTH_TTL_SEC=43200`
+  - `INSTANCE_AUTH_SECRET=...` (consigliato in produzione, stringa lunga casuale)
 
 Nota: le azioni supportate per le luci sono `on` e `off`.
 

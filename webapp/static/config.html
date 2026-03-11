@@ -205,11 +205,15 @@
       const channels = [];
       for (let ch = channelStart; ch <= channelEnd; ch += 1) {
         const saved = byChannel.get(ch) || {};
-        channels.push({
+        const item = {
           channel: ch,
           name: cleanText(saved.name, defaultChannelName(kind, ch)),
           room: cleanText(saved.room, "Senza stanza")
-        });
+        };
+        if (kind === "light" || kind === "shutter" || kind === "thermostat") {
+          item.profile = (saved.profile && typeof saved.profile === "object") ? saved.profile : { enabled: false, entries: [] };
+        }
+        channels.push(item);
       }
 
       return { id, name, address, kind, channelStart, channelEnd, channels };

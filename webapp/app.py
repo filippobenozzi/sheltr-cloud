@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
 from paho.mqtt import client as mqtt
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
 APP_PORT = int(os.environ.get("APP_PORT", "8080"))
@@ -40,6 +40,8 @@ MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip()
     "on",
 }
 INSTANCE_AUTH_TTL_SEC = max(300, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", "43200")))
+INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
+LIGHT_PROFILE_LOOP_INTERVAL_SEC = max(5, int(os.environ.get("LIGHT_PROFILE_LOOP_INTERVAL_SEC", "20")))
 LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {
     "json",
@@ -73,8 +75,10 @@ KIND_META = {
 
 STORE_LOCK = threading.Lock()
 LIGHT_STATE_LOCK = threading.Lock()
-AUTH_LOCK = threading.Lock()
-AUTH_SESSIONS: dict[str, dict[str, Any]] = {}
+PROFILE_LOCK = threading.Lock()
+LIGHT_PROFILE_LAST_RUN: dict[str, str] = {}
+PROFILE_LOOP_STARTED = False
+AUTH_TOKEN_SERIALIZER = URLSafeTimedSerializer(INSTANCE_AUTH_SECRET, salt="iotsheltr-instance-auth-v1")
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -113,6 +117,148 @@ def default_channel_name(kind: str, channel: int) -> str:
     return f"{prefix} {channel}"
 
 
+def normalize_time_hhmm(value: Any, fallback: str = "00:00") -> str:
+    text = clean_text(value, fallback)
+    if not re.fullmatch(r"\d{2}:\d{2}", text):
+        return fallback
+    hh = to_int(text[:2], -1)
+    mm = to_int(text[3:], -1)
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+        return fallback
+    return f"{hh:02d}:{mm:02d}"
+
+
+def normalize_day(value: Any) -> int:
+    num = to_int(value, 0)
+    if 1 <= num <= 7:
+        return num
+    key = clean_text(value, "").lower()
+    aliases = {
+        "mon": 1,
+        "monday": 1,
+        "lun": 1,
+        "lunedi": 1,
+        "tue": 2,
+        "tuesday": 2,
+        "mar": 2,
+        "martedi": 2,
+        "wed": 3,
+        "wednesday": 3,
+        "mer": 3,
+        "mercoledi": 3,
+        "thu": 4,
+        "thursday": 4,
+        "gio": 4,
+        "giovedi": 4,
+        "fri": 5,
+        "friday": 5,
+        "ven": 5,
+        "venerdi": 5,
+        "sat": 6,
+        "saturday": 6,
+        "sab": 6,
+        "sabato": 6,
+        "sun": 7,
+        "sunday": 7,
+        "dom": 7,
+        "domenica": 7,
+    }
+    return aliases.get(key, 0)
+
+
+def normalize_days(value: Any) -> list[int]:
+    out: set[int] = set()
+    if isinstance(value, dict):
+        for key, enabled in value.items():
+            if not enabled:
+                continue
+            day = normalize_day(key)
+            if day:
+                out.add(day)
+    elif isinstance(value, list):
+        for item in value:
+            day = normalize_day(item)
+            if day:
+                out.add(day)
+    else:
+        day = normalize_day(value)
+        if day:
+            out.add(day)
+    if not out:
+        return [1, 2, 3, 4, 5, 6, 7]
+    return sorted(out)
+
+
+def normalize_switch_profile(value: Any, kind: str = "light") -> dict[str, Any]:
+    profile_in = value if isinstance(value, dict) else {}
+    entries_in = profile_in.get("entries")
+    entries_list = entries_in if isinstance(entries_in, list) else []
+    default_action = "off" if kind != "shutter" else "down"
+    entries: list[dict[str, Any]] = []
+    for entry in entries_list[:64]:
+        if not isinstance(entry, dict):
+            continue
+        action = clean_text(entry.get("action"), default_action).lower()
+        if kind == "shutter":
+            action = "up" if action == "up" else "down"
+        else:
+            action = "on" if action == "on" else "off"
+        entries.append(
+            {
+                "time": normalize_time_hhmm(entry.get("time"), "00:00"),
+                "action": action,
+                "days": normalize_days(entry.get("days")),
+            }
+        )
+    if not entries and isinstance(profile_in, dict) and any(k in profile_in for k in ("time", "action", "days")):
+        one = {
+            "time": normalize_time_hhmm(profile_in.get("time"), "00:00"),
+            "action": clean_text(profile_in.get("action"), default_action).lower(),
+            "days": normalize_days(profile_in.get("days")),
+        }
+        if kind == "shutter":
+            one["action"] = "up" if one["action"] == "up" else "down"
+        else:
+            one["action"] = "on" if one["action"] == "on" else "off"
+        entries = [one]
+    return {"enabled": bool(profile_in.get("enabled")), "entries": entries}
+
+
+def normalize_thermostat_profile(value: Any) -> dict[str, Any]:
+    profile_in = value if isinstance(value, dict) else {}
+    entries_in = profile_in.get("entries")
+    entries_list = entries_in if isinstance(entries_in, list) else []
+    entries: list[dict[str, Any]] = []
+    for entry in entries_list[:64]:
+        if not isinstance(entry, dict):
+            continue
+        setpoint_raw = entry.get("setpoint")
+        try:
+            setpoint = float(setpoint_raw)
+        except (TypeError, ValueError):
+            setpoint = 21.0
+        setpoint = max(5.0, min(30.0, round(setpoint * 2) / 2))
+        mode = clean_text(entry.get("mode"), "winter").lower()
+        if mode not in {"winter", "summer"}:
+            mode = "winter"
+        entries.append(
+            {
+                "from": normalize_time_hhmm(entry.get("from"), "00:00"),
+                "to": normalize_time_hhmm(entry.get("to"), "23:59"),
+                "setpoint": setpoint,
+                "mode": mode,
+                "days": normalize_days(entry.get("days")),
+            }
+        )
+    return {"enabled": bool(profile_in.get("enabled")), "entries": entries}
+
+
+def profile_kind_for_board(kind: str) -> str | None:
+    if kind in {"light", "shutter", "thermostat"}:
+        return kind
+    return None
+
+
 def normalize_board(raw: Any, index: int) -> dict[str, Any]:
     board = raw if isinstance(raw, dict) else {}
     kind = clean_text(board.get("kind"), "light").lower()
@@ -140,13 +286,17 @@ def normalize_board(raw: Any, index: int) -> dict[str, Any]:
     channels: list[dict[str, Any]] = []
     for channel in range(channel_start, channel_end + 1):
         saved = channel_map.get(channel, {})
-        channels.append(
-            {
-                "channel": channel,
-                "name": clean_text(saved.get("name"), default_channel_name(kind, channel)),
-                "room": clean_text(saved.get("room"), "Senza stanza"),
-            }
-        )
+        data = {
+            "channel": channel,
+            "name": clean_text(saved.get("name"), default_channel_name(kind, channel)),
+            "room": clean_text(saved.get("room"), "Senza stanza"),
+        }
+        profile_kind = profile_kind_for_board(kind)
+        if profile_kind == "thermostat":
+            data["profile"] = normalize_thermostat_profile(saved.get("profile"))
+        elif profile_kind in {"light", "shutter"}:
+            data["profile"] = normalize_switch_profile(saved.get("profile"), profile_kind)
+        channels.append(data)
 
     return {
         "id": board_id,
@@ -326,23 +476,18 @@ def instance_publish_payload(instance: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def prune_auth_sessions_locked() -> None:
-    now_ts = time.time()
-    stale = [token for token, item in AUTH_SESSIONS.items() if float(item.get("expiresAt", 0)) <= now_ts]
-    for token in stale:
-        AUTH_SESSIONS.pop(token, None)
+def instance_token_cookie_name(instance_id: str) -> str:
+    return f"sheltr_token_{slugify(instance_id, 'dr154-1').replace('-', '_')}"
 
 
 def issue_instance_token(instance_id: str) -> tuple[str, str]:
-    token = secrets.token_urlsafe(24)
-    expires_ts = time.time() + INSTANCE_AUTH_TTL_SEC
-    with AUTH_LOCK:
-        prune_auth_sessions_locked()
-        AUTH_SESSIONS[token] = {"instanceId": instance_id, "expiresAt": expires_ts}
+    now_ts = int(time.time())
+    token = AUTH_TOKEN_SERIALIZER.dumps({"instanceId": instance_id, "iat": now_ts})
+    expires_ts = now_ts + INSTANCE_AUTH_TTL_SEC
     return token, datetime.fromtimestamp(expires_ts, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
-def extract_instance_token(body: dict[str, Any] | None = None) -> str:
+def extract_instance_token(body: dict[str, Any] | None = None, instance_id: str = "") -> str:
     from_header = clean_text(request.headers.get("X-Instance-Token"), "")
     if from_header:
         return from_header
@@ -353,6 +498,13 @@ def extract_instance_token(body: dict[str, Any] | None = None) -> str:
         raw = body.get("token")
         if isinstance(raw, str):
             return raw.strip()
+    if instance_id:
+        from_cookie = clean_text(request.cookies.get(instance_token_cookie_name(instance_id)), "")
+        if from_cookie:
+            return from_cookie
+    from_legacy_cookie = clean_text(request.cookies.get("instance_token"), "")
+    if from_legacy_cookie:
+        return from_legacy_cookie
     return ""
 
 
@@ -360,40 +512,31 @@ def require_instance_auth(instance: dict[str, Any], instance_id: str, body: dict
     if not instance_has_auth(instance):
         return None
 
-    token = extract_instance_token(body)
+    token = extract_instance_token(body, instance_id=instance_id)
     if not token:
         return err("Autenticazione richiesta", 401)
 
-    with AUTH_LOCK:
-        prune_auth_sessions_locked()
-        session = AUTH_SESSIONS.get(token)
-        if not isinstance(session, dict):
-            return err("Sessione non valida", 401)
-        if clean_text(session.get("instanceId"), "") != instance_id:
-            return err("Sessione non valida per questa istanza", 401)
-        expires_at = float(session.get("expiresAt", 0))
-        if expires_at <= time.time():
-            AUTH_SESSIONS.pop(token, None)
-            return err("Sessione scaduta", 401)
+    try:
+        payload = AUTH_TOKEN_SERIALIZER.loads(token, max_age=INSTANCE_AUTH_TTL_SEC)
+    except SignatureExpired:
+        return err("Sessione scaduta", 401)
+    except BadSignature:
+        return err("Sessione non valida", 401)
+
+    if not isinstance(payload, dict):
+        return err("Sessione non valida", 401)
+    if clean_text(payload.get("instanceId"), "") != instance_id:
+        return err("Sessione non valida per questa istanza", 401)
 
     return None
 
 
 def revoke_instance_token(token: str) -> None:
-    if not token:
-        return
-    with AUTH_LOCK:
-        AUTH_SESSIONS.pop(token, None)
+    _ = token
 
 
 def migrate_instance_tokens(old_id: str, new_id: str) -> None:
-    if old_id == new_id:
-        return
-    with AUTH_LOCK:
-        prune_auth_sessions_locked()
-        for item in AUTH_SESSIONS.values():
-            if clean_text(item.get("instanceId"), "") == old_id:
-                item["instanceId"] = new_id
+    _ = (old_id, new_id)
 
 
 def mqtt_payload_bytes(payload: Any) -> bytes:
@@ -712,6 +855,275 @@ def poll_light_state_via_mqtt(
     return {"verified": False, "reason": reason or "nessuna_risposta_poll"}
 
 
+def poll_board_output_mask_via_mqtt(
+    *,
+    command_topic: str,
+    response_topic: str,
+    payload_format: str,
+    address: int,
+) -> dict[str, Any]:
+    if not response_topic:
+        return {"ok": False, "error": "response_topic_non_configurato"}
+    if response_topic.strip() == command_topic.strip():
+        return {"ok": False, "error": "response_topic_uguale_al_topic_comandi"}
+    if not payload_format.startswith("frame_"):
+        return {"ok": False, "error": "payload_non_frame"}
+
+    poll_frame = build_protocol_frame(address, 0x40, [])
+    poll_payload = frame_payload_for_format(poll_frame, payload_format)
+    attempts = max(1, MQTT_RESPONSE_RETRIES + 1)
+    outcome: dict[str, Any] = {}
+
+    for attempt in range(1, attempts + 1):
+        outcome = mqtt_publish_and_wait_frame(
+            publish_topic=command_topic,
+            publish_payload=poll_payload,
+            response_topic=response_topic,
+            expected_address=address,
+            expected_command=0x40,
+            timeout_ms=MQTT_RESPONSE_TIMEOUT_MS,
+            qos=MQTT_COMMAND_QOS,
+        ) or {}
+        matched = outcome.get("matched")
+        if isinstance(matched, dict):
+            output_mask = decode_poll_output_mask(matched)
+            if output_mask is not None:
+                return {
+                    "ok": True,
+                    "address": address,
+                    "outputMask": output_mask,
+                    "frameHex": matched.get("hex"),
+                    "framesSeen": to_int(outcome.get("framesSeen"), 0),
+                }
+        if attempt < attempts and MQTT_RESPONSE_RETRY_DELAY_MS > 0:
+            time.sleep(MQTT_RESPONSE_RETRY_DELAY_MS / 1000.0)
+
+    reason = clean_text(outcome.get("error"), "nessuna_risposta_poll")
+    return {"ok": False, "address": address, "error": reason}
+
+
+def _load_instance_state(instance_id: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    with LIGHT_STATE_LOCK:
+        light_state = load_light_state()
+    instances_map = light_state.setdefault("instances", {})
+    if not isinstance(instances_map, dict):
+        instances_map = {}
+        light_state["instances"] = instances_map
+    instance_state = instances_map.setdefault(instance_id, {})
+    if not isinstance(instance_state, dict):
+        instance_state = {}
+        instances_map[instance_id] = instance_state
+    return light_state, instances_map, instance_state
+
+
+def _save_instance_state(light_state: dict[str, Any]) -> None:
+    with LIGHT_STATE_LOCK:
+        save_light_state(light_state)
+
+
+def execute_light_targets(
+    *,
+    instance_id: str,
+    instance: dict[str, Any],
+    targets: list[dict[str, Any]],
+    action: str,
+    topic: str | None = None,
+    response_topic: str | None = None,
+    payload_format: str | None = None,
+    require_response: bool | None = None,
+) -> dict[str, Any]:
+    if action not in LIGHT_COMMAND_ACTIONS:
+        allowed = ",".join(sorted(LIGHT_COMMAND_ACTIONS))
+        raise ValueError(f"Azione luce non valida. Valori ammessi: {allowed}")
+
+    effective_topic = clean_text(topic, get_light_command_topic(instance))
+    if not effective_topic:
+        raise ValueError("Topic MQTT non valido")
+    effective_response_topic = response_topic.strip() if isinstance(response_topic, str) else get_light_response_topic(instance)
+    effective_payload_format = clean_text(payload_format, get_light_payload_format(instance)).lower()
+    if effective_payload_format not in LIGHT_PAYLOAD_FORMATS:
+        raise ValueError("Formato payload non valido")
+    must_verify = MQTT_REQUIRE_RESPONSE if require_response is None else bool(require_response)
+
+    light_state, _, instance_state = _load_instance_state(instance_id)
+    sent: list[dict[str, Any]] = []
+
+    for entity in targets:
+        payload, frame_hex = light_payload_for_target(
+            instance_id=instance_id,
+            target=entity,
+            action=action,
+            payload_format=effective_payload_format,
+        )
+        send_count = 1
+        if effective_payload_format.startswith("frame_") and action in {"on", "off"}:
+            send_count = MQTT_COMMAND_REPEAT_ONOFF
+        for idx in range(send_count):
+            mqtt_publish(
+                effective_topic,
+                payload,
+                qos=MQTT_COMMAND_QOS,
+                retain=False,
+                retries=MQTT_COMMAND_RETRIES,
+                retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
+            )
+            if idx < (send_count - 1) and MQTT_COMMAND_REPEAT_GAP_MS > 0:
+                time.sleep(MQTT_COMMAND_REPEAT_GAP_MS / 1000.0)
+
+        previous_state = instance_state.get(entity["id"]) if isinstance(instance_state.get(entity["id"]), dict) else {}
+        prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
+        next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
+        verification = poll_light_state_via_mqtt(
+            command_topic=effective_topic,
+            response_topic=effective_response_topic,
+            payload_format=effective_payload_format,
+            address=clamp(to_int(entity.get("address"), 0), 0, 254),
+            channel=clamp(to_int(entity.get("channel"), 1), 1, 8),
+        )
+        if isinstance(verification.get("isOn"), bool):
+            next_on = bool(verification["isOn"])
+        if must_verify and not bool(verification.get("verified")):
+            reason = clean_text(verification.get("reason"), "nessuna risposta")
+            raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
+
+        state_updated_at = now_iso()
+        instance_state[entity["id"]] = {
+            "isOn": bool(next_on) if next_on is not None else None,
+            "updatedAt": state_updated_at,
+            "source": "poll" if bool(verification.get("verified")) else "command",
+            "action": action,
+        }
+        item = {"id": entity["id"], "action": action}
+        if frame_hex:
+            item["frameHex"] = frame_hex
+        if isinstance(payload, (bytes, bytearray)):
+            item["payloadBytesHex"] = payload.hex().upper()
+        elif isinstance(payload, str):
+            item["payload"] = payload
+        item["sendCount"] = send_count
+        item["publishRetries"] = MQTT_COMMAND_RETRIES
+        item["verified"] = bool(verification.get("verified"))
+        if verification.get("frameHex"):
+            item["verifyFrameHex"] = verification.get("frameHex")
+        if verification.get("outputMask") is not None:
+            item["verifyOutputMask"] = verification.get("outputMask")
+        if verification.get("reason"):
+            item["verifyReason"] = verification.get("reason")
+        item["isOn"] = instance_state[entity["id"]]["isOn"]
+        sent.append(item)
+
+    _save_instance_state(light_state)
+    return {
+        "topic": effective_topic,
+        "responseTopic": effective_response_topic,
+        "payloadFormat": effective_payload_format,
+        "sent": sent,
+    }
+
+
+def hhmm_to_minute(value: str) -> int:
+    text = normalize_time_hhmm(value, "00:00")
+    return to_int(text[:2], 0) * 60 + to_int(text[3:], 0)
+
+
+def apply_light_profiles_once() -> None:
+    now_local = time.localtime()
+    weekday = now_local.tm_wday + 1
+    now_minute = now_local.tm_hour * 60 + now_local.tm_min
+    minute_stamp = f"{now_local.tm_year}-{now_local.tm_yday}-{now_minute}"
+
+    with STORE_LOCK:
+        store = load_store()
+    valid_keys: set[str] = set()
+
+    for instance in store.get("instances", []):
+        if not isinstance(instance, dict):
+            continue
+        instance_id = clean_text(instance.get("id"), "")
+        if not instance_id:
+            continue
+
+        entities = {item["id"]: item for item in light_entities(instance)}
+        if not entities:
+            continue
+        for board in instance.get("boards", []):
+            if not isinstance(board, dict) or board.get("kind") != "light":
+                continue
+            board_id = clean_text(board.get("id"), "")
+            if not board_id:
+                continue
+            for channel_data in board.get("channels", []):
+                if not isinstance(channel_data, dict):
+                    continue
+                channel = clamp(to_int(channel_data.get("channel"), -1), 1, 8)
+                if channel < 1:
+                    continue
+                light_id = f"{board_id}-c{channel}"
+                profile = normalize_switch_profile(channel_data.get("profile"), "light")
+                if not profile.get("enabled"):
+                    continue
+                entries = profile.get("entries", [])
+                if not isinstance(entries, list):
+                    continue
+
+                for idx, entry in enumerate(entries):
+                    if not isinstance(entry, dict):
+                        continue
+                    cache_key = f"{instance_id}:{light_id}:{idx}"
+                    valid_keys.add(cache_key)
+                    if weekday not in normalize_days(entry.get("days")):
+                        continue
+                    if now_minute != hhmm_to_minute(clean_text(entry.get("time"), "00:00")):
+                        continue
+
+                    with PROFILE_LOCK:
+                        if LIGHT_PROFILE_LAST_RUN.get(cache_key) == minute_stamp:
+                            continue
+
+                    action = clean_text(entry.get("action"), "off").lower()
+                    if action not in LIGHT_COMMAND_ACTIONS:
+                        continue
+                    target = entities.get(light_id)
+                    if not isinstance(target, dict):
+                        continue
+                    try:
+                        execute_light_targets(
+                            instance_id=instance_id,
+                            instance=instance,
+                            targets=[target],
+                            action=action,
+                            require_response=False,
+                        )
+                        with PROFILE_LOCK:
+                            LIGHT_PROFILE_LAST_RUN[cache_key] = minute_stamp
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[warn] profilo luce {instance_id}:{light_id} fallito: {exc}")
+
+    with PROFILE_LOCK:
+        stale = [key for key in LIGHT_PROFILE_LAST_RUN if key not in valid_keys]
+        for key in stale:
+            LIGHT_PROFILE_LAST_RUN.pop(key, None)
+
+
+def light_profile_loop() -> None:
+    while True:
+        try:
+            apply_light_profiles_once()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] loop profili luce: {exc}")
+        time.sleep(LIGHT_PROFILE_LOOP_INTERVAL_SEC)
+
+
+def ensure_profile_loop() -> None:
+    global PROFILE_LOOP_STARTED
+    with PROFILE_LOCK:
+        if PROFILE_LOOP_STARTED:
+            return
+        PROFILE_LOOP_STARTED = True
+    thread = threading.Thread(target=light_profile_loop, daemon=True, name="light-profile-loop")
+    thread.start()
+
+
 def light_payload_for_target(
     *,
     instance_id: str,
@@ -957,12 +1369,6 @@ def api_delete_instance(instance_id: str):
             instances_map.pop(current_id, None)
             save_light_state(light_state)
 
-    with AUTH_LOCK:
-        prune_auth_sessions_locked()
-        stale = [token for token, sess in AUTH_SESSIONS.items() if clean_text(sess.get("instanceId"), "") == current_id]
-        for token in stale:
-            AUTH_SESSIONS.pop(token, None)
-
     return jsonify({"ok": True})
 
 
@@ -999,16 +1405,28 @@ def api_instance_auth_login(instance_id: str):
         return err("Credenziali non valide", 401)
 
     token, expires_at = issue_instance_token(instance_id_real)
-    return jsonify({"ok": True, "token": token, "expiresAt": expires_at})
+    response = jsonify({"ok": True, "token": token, "expiresAt": expires_at})
+    response.set_cookie(
+        instance_token_cookie_name(instance_id_real),
+        token,
+        max_age=INSTANCE_AUTH_TTL_SEC,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+    )
+    return response
 
 
 @app.post("/api/instances/<instance_id>/auth/logout")
 def api_instance_auth_logout(instance_id: str):
-    _ = instance_id
+    instance_id_real = slugify(instance_id, "dr154-1")
     body = request.get_json(silent=True) or {}
-    token = extract_instance_token(body)
+    token = extract_instance_token(body, instance_id=instance_id_real)
     revoke_instance_token(token)
-    return jsonify({"ok": True})
+    response = jsonify({"ok": True})
+    response.delete_cookie(instance_token_cookie_name(instance_id_real), path="/")
+    response.delete_cookie("instance_token", path="/")
+    return response
 
 
 @app.post("/api/instances/<instance_id>/publish")
@@ -1046,11 +1464,62 @@ def api_list_lights(instance_id: str):
         return auth_error
 
     lights = light_entities(instance)
+    refresh = clean_text(request.args.get("refresh"), "0") in {"1", "true", "yes", "on"}
+    refresh_errors: list[dict[str, Any]] = []
+    polls: dict[int, dict[str, Any]] = {}
+    if refresh:
+        addresses = sorted({clamp(to_int(item.get("address"), -1), 0, 254) for item in lights})
+        command_topic = get_light_command_topic(instance)
+        response_topic = get_light_response_topic(instance)
+        payload_format = get_light_payload_format(instance)
+        for address in addresses:
+            if address < 0:
+                continue
+            outcome = poll_board_output_mask_via_mqtt(
+                command_topic=command_topic,
+                response_topic=response_topic,
+                payload_format=payload_format,
+                address=address,
+            )
+            if outcome.get("ok"):
+                polls[address] = outcome
+            else:
+                refresh_errors.append(
+                    {
+                        "address": address,
+                        "error": clean_text(outcome.get("error"), "poll fallito"),
+                    }
+                )
+
     with LIGHT_STATE_LOCK:
         light_state = load_light_state()
     by_instance = light_state.get("instances", {}).get(instance_id_real, {})
     if not isinstance(by_instance, dict):
         by_instance = {}
+
+    did_refresh_state = False
+    if refresh and polls:
+        instances_map = light_state.setdefault("instances", {})
+        if isinstance(instances_map, dict):
+            by_instance = instances_map.setdefault(instance_id_real, by_instance if isinstance(by_instance, dict) else {})
+            if not isinstance(by_instance, dict):
+                by_instance = {}
+                instances_map[instance_id_real] = by_instance
+        now_ts = now_iso()
+        for light in lights:
+            addr = clamp(to_int(light.get("address"), -1), 0, 254)
+            poll = polls.get(addr)
+            if not isinstance(poll, dict):
+                continue
+            output_mask = clamp(to_int(poll.get("outputMask"), 0), 0, 255)
+            bit = 1 << (clamp(to_int(light.get("channel"), 1), 1, 8) - 1)
+            is_on = bool(output_mask & bit)
+            by_instance[light["id"]] = {
+                "isOn": is_on,
+                "updatedAt": now_ts,
+                "source": "poll-refresh",
+            }
+            did_refresh_state = True
 
     for light in lights:
         stored = by_instance.get(light["id"])
@@ -1062,12 +1531,16 @@ def api_list_lights(instance_id: str):
         else:
             light["isOn"] = None
 
+    if did_refresh_state:
+        _save_instance_state(light_state)
+
     return jsonify(
         {
             "instanceId": instance_id_real,
             "commandTopic": get_light_command_topic(instance),
             "responseTopic": get_light_response_topic(instance),
             "payloadFormat": get_light_payload_format(instance),
+            "refreshErrors": refresh_errors,
             "lights": lights,
         }
     )
@@ -1134,95 +1607,28 @@ def api_light_command(instance_id: str):
     else:
         return err("Specifica 'lightId' oppure imposta 'all=true'", 400)
 
-    with LIGHT_STATE_LOCK:
-        light_state = load_light_state()
-    instances_map = light_state.setdefault("instances", {})
-    if not isinstance(instances_map, dict):
-        instances_map = {}
-        light_state["instances"] = instances_map
-    instance_state = instances_map.setdefault(instance_id_real, {})
-    if not isinstance(instance_state, dict):
-        instance_state = {}
-        instances_map[instance_id_real] = instance_state
-
-    sent: list[dict[str, Any]] = []
-    for entity in targets:
-        try:
-            payload, frame_hex = light_payload_for_target(
-                instance_id=instance_id_real,
-                target=entity,
-                action=action,
-                payload_format=payload_format,
-            )
-        except ValueError as exc:
-            return err(str(exc), 400)
-        send_count = 1
-        if payload_format.startswith("frame_") and action in {"on", "off"}:
-            send_count = MQTT_COMMAND_REPEAT_ONOFF
-        try:
-            for idx in range(send_count):
-                mqtt_publish(
-                    topic,
-                    payload,
-                    qos=MQTT_COMMAND_QOS,
-                    retain=False,
-                    retries=MQTT_COMMAND_RETRIES,
-                    retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
-                )
-                if idx < (send_count - 1) and MQTT_COMMAND_REPEAT_GAP_MS > 0:
-                    time.sleep(MQTT_COMMAND_REPEAT_GAP_MS / 1000.0)
-        except Exception as exc:  # noqa: BLE001
-            return err(f"Errore pubblicazione comando luce: {exc}", 502)
-        previous_state = instance_state.get(entity["id"]) if isinstance(instance_state.get(entity["id"]), dict) else {}
-        prev_on = previous_state.get("isOn") if isinstance(previous_state, dict) else None
-        next_on = desired_light_state(action, prev_on if isinstance(prev_on, bool) else None)
-        verification = poll_light_state_via_mqtt(
-            command_topic=topic,
+    try:
+        result = execute_light_targets(
+            instance_id=instance_id_real,
+            instance=instance,
+            targets=targets,
+            action=action,
+            topic=topic,
             response_topic=response_topic,
             payload_format=payload_format,
-            address=clamp(to_int(entity.get("address"), 0), 0, 254),
-            channel=clamp(to_int(entity.get("channel"), 1), 1, 8),
+            require_response=MQTT_REQUIRE_RESPONSE,
         )
-        if isinstance(verification.get("isOn"), bool):
-            next_on = bool(verification["isOn"])
-        if MQTT_REQUIRE_RESPONSE and not bool(verification.get("verified")):
-            reason = clean_text(verification.get("reason"), "nessuna risposta")
-            return err(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}", 502)
-        state_updated_at = now_iso()
-        instance_state[entity["id"]] = {
-            "isOn": bool(next_on) if next_on is not None else None,
-            "updatedAt": state_updated_at,
-            "source": "poll" if bool(verification.get("verified")) else "command",
-            "action": action,
-        }
-        item = {"id": entity["id"], "action": action}
-        if frame_hex:
-            item["frameHex"] = frame_hex
-        if isinstance(payload, (bytes, bytearray)):
-            item["payloadBytesHex"] = payload.hex().upper()
-        elif isinstance(payload, str):
-            item["payload"] = payload
-        item["sendCount"] = send_count
-        item["publishRetries"] = MQTT_COMMAND_RETRIES
-        item["verified"] = bool(verification.get("verified"))
-        if verification.get("frameHex"):
-            item["verifyFrameHex"] = verification.get("frameHex")
-        if verification.get("outputMask") is not None:
-            item["verifyOutputMask"] = verification.get("outputMask")
-        if verification.get("reason"):
-            item["verifyReason"] = verification.get("reason")
-        item["isOn"] = instance_state[entity["id"]]["isOn"]
-        sent.append(item)
-
-    with LIGHT_STATE_LOCK:
-        save_light_state(light_state)
+    except ValueError as exc:
+        return err(str(exc), 400)
+    except Exception as exc:  # noqa: BLE001
+        return err(f"Errore pubblicazione comando luce: {exc}", 502)
 
     return jsonify(
         {
             "ok": True,
-            "topic": topic,
-            "responseTopic": response_topic,
-            "payloadFormat": payload_format,
+            "topic": result["topic"],
+            "responseTopic": result["responseTopic"],
+            "payloadFormat": result["payloadFormat"],
             "qos": MQTT_COMMAND_QOS,
             "retain": False,
             "reliability": {
@@ -1236,9 +1642,12 @@ def api_light_command(instance_id: str):
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
-            "sent": sent,
+            "sent": result["sent"],
         }
     )
+
+
+ensure_profile_loop()
 
 
 if __name__ == "__main__":
