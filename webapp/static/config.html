@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#191919">
+  <title>Sheltr Config</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg:#191919; --section:#282828; --fg:#f0efed; --muted:#bcbab6; --bd:#bcbab6; --s1:4px; --s2:8px; --s3:12px; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,Monaco,Liberation Mono,monospace; }
+    * { box-sizing:border-box; }
+    body { font:13px/1.35 var(--mono); margin:0; padding:var(--s3); min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); }
+    .brand { display:flex; align-items:center; gap:var(--s2); }
+    .logo { width:28px; height:28px; display:block; flex:0 0 28px; }
+    .layout { display:grid; grid-template-columns:280px 1fr; gap:var(--s2); }
+    .box { background:var(--section); border:1px solid var(--bd); border-radius:6px; padding:var(--s3); }
+    .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); gap:var(--s2); flex-wrap:wrap; }
+    h1 { font-size:17px; margin:0; }
+    h2 { font-size:14px; margin:0 0 var(--s2); color:var(--muted); }
+    .small { font-size:12px; color:var(--muted); margin:0; }
+    .stack { display:grid; gap:var(--s2); }
+    .row { display:flex; gap:var(--s2); flex-wrap:wrap; }
+    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:160px; }
+    input, select, button { font:12px/1.2 var(--mono); }
+    input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
+    button { border:1px solid var(--bd); background:#000; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+    button:hover { background:#111; }
+    button.danger { background:#4f1111; border-color:#7d3535; }
+    button.danger:hover { background:#662020; }
+    .instances { display:grid; gap:var(--s2); }
+    .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); }
+    .instance-item.active { background:#111; border-color:#fff; }
+    .meta { color:var(--muted); font-size:11px; }
+    .board { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); margin:var(--s2) 0; background:var(--section); }
+    .board h3 { font-size:13px; margin:0; }
+    .board-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); }
+    .channels { border-top:1px dashed var(--bd); margin-top:var(--s2); padding-top:var(--s2); display:grid; gap:6px; }
+    .channel { display:grid; grid-template-columns:56px 1fr 140px; gap:var(--s2); align-items:center; }
+    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; }
+    a.nav { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:6px 10px; background:var(--section); font-size:12px; }
+    a.nav:hover { background:#2b2b2b; }
+    .foot { margin-top:auto; padding:var(--s3) 0 2px; text-align:center; font-style:italic; font:12px/1.3 var(--mono); color:var(--muted); }
+    .foot a { color:inherit; }
+    .hidden { display:none; }
+    @media (max-width: 980px) { .layout { grid-template-columns:1fr; } }
+    @media (max-width: 720px) { .channel { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Programmazione Schede</h1></div>
+    <a class="nav" id="toControl" href="/control">Vai a Controllo</a>
+  </div>
+
+  <main class="layout">
+    <aside class="box stack">
+      <h2>Istanze DR154</h2>
+      <form id="createForm" class="stack">
+        <label>ID istanza<input id="newId" placeholder="es. casa-demo" required></label>
+        <label>Nome istanza<input id="newName" placeholder="es. Casa Demo" required></label>
+        <button type="submit">Crea istanza</button>
+      </form>
+      <div class="instances" id="instances"></div>
+    </aside>
+
+    <section class="box">
+      <div id="emptyState" class="small">Crea o seleziona una istanza.</div>
+      <div id="editor" class="hidden">
+        <h2 id="instanceTitle">Istanza</h2>
+        <div class="row">
+          <label>Nome istanza<input id="instanceName"></label>
+          <label>Topic configurazione<input id="configTopicInput"></label>
+          <label>Topic comandi luci<input id="lightTopicInput"></label>
+          <label>Formato payload
+            <select id="lightPayloadFormat">
+              <option value="frame_hex_space">Frame HEX con spazi</option>
+              <option value="frame_hex_compact">Frame HEX compatto</option>
+              <option value="frame_hex_space_crlf">Frame HEX con spazi + CRLF</option>
+              <option value="frame_hex_compact_crlf">Frame HEX compatto + CRLF</option>
+              <option value="frame_bytes">Frame bytes raw</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label>Versione protocollo<input id="protocolVersion" value="1.6" readonly></label>
+          <label>Schede<input id="boardsCount" readonly></label>
+        </div>
+
+        <div class="row" style="margin-top:8px;">
+          <button id="addBoard" type="button">Aggiungi scheda</button>
+          <button id="saveBtn" type="button">Salva</button>
+          <button id="publishBtn" type="button">Pubblica su MQTT</button>
+          <button id="deleteBtn" class="danger" type="button">Elimina istanza</button>
+        </div>
+
+        <div id="boards"></div>
+      </div>
+      <pre class="msg" id="msg"></pre>
+    </section>
+  </main>
+  <footer class="foot">not all those who wander are lost ~ <a href="https://filippo.im" target="_blank" rel="noopener">filippo.im</a></footer>
+
+  <script>
+    const KIND_META = {
+      light: { label: "Luci", maxChannels: 8, prefix: "Luce" },
+      shutter: { label: "Tapparelle", maxChannels: 4, prefix: "Tapparella" },
+      dimmer: { label: "Dimmer", maxChannels: 1, prefix: "Dimmer" },
+      thermostat: { label: "Termostati", maxChannels: 8, prefix: "Termostato" }
+    };
+
+    const state = { instances: [], current: null, currentId: null, mqttBaseTopic: "dr154" };
+
+    const el = {
+      toControl: document.getElementById("toControl"),
+      createForm: document.getElementById("createForm"),
+      newId: document.getElementById("newId"),
+      newName: document.getElementById("newName"),
+      instances: document.getElementById("instances"),
+      emptyState: document.getElementById("emptyState"),
+      editor: document.getElementById("editor"),
+      instanceTitle: document.getElementById("instanceTitle"),
+      instanceName: document.getElementById("instanceName"),
+      configTopicInput: document.getElementById("configTopicInput"),
+      lightTopicInput: document.getElementById("lightTopicInput"),
+      lightPayloadFormat: document.getElementById("lightPayloadFormat"),
+      protocolVersion: document.getElementById("protocolVersion"),
+      boardsCount: document.getElementById("boardsCount"),
+      addBoard: document.getElementById("addBoard"),
+      saveBtn: document.getElementById("saveBtn"),
+      publishBtn: document.getElementById("publishBtn"),
+      deleteBtn: document.getElementById("deleteBtn"),
+      boards: document.getElementById("boards"),
+      msg: document.getElementById("msg")
+    };
+
+    function note(text, isError = false) {
+      el.msg.textContent = text || "";
+      el.msg.style.color = isError ? "#ff8a80" : "var(--fg)";
+    }
+
+    function toInt(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.trunc(n) : fallback;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function cleanText(value, fallback = "") {
+      const txt = String(value ?? "").trim();
+      return txt || fallback;
+    }
+
+    function slugify(value, fallback) {
+      const out = cleanText(value, fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+      return out || fallback;
+    }
+
+    function defaultChannelName(kind, channel) {
+      return `${KIND_META[kind]?.prefix || "Canale"} ${channel}`;
+    }
+
+    function defaultLightTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
+    }
+
+    function defaultConfigTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/config`;
+    }
+
+    function normalizeBoard(raw, index) {
+      const board = raw && typeof raw === "object" ? raw : {};
+      const kind = KIND_META[board.kind] ? board.kind : "light";
+      const max = KIND_META[kind].maxChannels;
+      const id = slugify(board.id || board.name || `board-${index + 1}`, `board-${index + 1}`);
+      const name = cleanText(board.name, id);
+      const address = clamp(toInt(board.address, index + 1), 0, 254);
+      let channelStart = clamp(toInt(board.channelStart, 1), 1, max);
+      let channelEnd = clamp(toInt(board.channelEnd, max), 1, max);
+      if (channelEnd < channelStart) channelEnd = channelStart;
+
+      const byChannel = new Map();
+      for (const item of Array.isArray(board.channels) ? board.channels : []) {
+        const ch = clamp(toInt(item?.channel, -1), 1, max);
+        if (ch >= channelStart && ch <= channelEnd) byChannel.set(ch, item || {});
+      }
+
+      const channels = [];
+      for (let ch = channelStart; ch <= channelEnd; ch += 1) {
+        const saved = byChannel.get(ch) || {};
+        channels.push({
+          channel: ch,
+          name: cleanText(saved.name, defaultChannelName(kind, ch)),
+          room: cleanText(saved.room, "Senza stanza")
+        });
+      }
+
+      return { id, name, address, kind, channelStart, channelEnd, channels };
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    }
+
+    function forcedInstanceFromUrl() {
+      const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "instance" && parts[1]) return decodeURIComponent(parts[1]);
+      const q = new URLSearchParams(location.search).get("instance");
+      return q || "";
+    }
+
+    function renderInstances() {
+      el.instances.innerHTML = "";
+      if (!state.instances.length) {
+        const p = document.createElement("p");
+        p.className = "small";
+        p.textContent = "Nessuna istanza.";
+        el.instances.appendChild(p);
+        return;
+      }
+
+      for (const item of state.instances) {
+        const box = document.createElement("div");
+        box.className = `instance-item${item.id === state.currentId ? " active" : ""}`;
+        const left = document.createElement("div");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = item.name;
+        b.onclick = () => loadInstance(item.id);
+        const m = document.createElement("div");
+        m.className = "meta";
+        m.textContent = `${item.id} • ${item.boardsCount} schede`;
+        left.appendChild(b);
+        left.appendChild(m);
+
+        const open = document.createElement("a");
+        open.className = "nav";
+        open.href = `/instance/${encodeURIComponent(item.id)}`;
+        open.textContent = "Apri";
+
+        box.appendChild(left);
+        box.appendChild(open);
+        el.instances.appendChild(box);
+      }
+    }
+
+    function renderEditor() {
+      if (!state.current) {
+        el.emptyState.classList.remove("hidden");
+        el.editor.classList.add("hidden");
+        el.boards.innerHTML = "";
+        return;
+      }
+
+      el.emptyState.classList.add("hidden");
+      el.editor.classList.remove("hidden");
+      el.instanceTitle.textContent = `Istanza: ${state.current.name}`;
+      el.instanceName.value = state.current.name;
+      el.protocolVersion.value = state.current.protocolVersion || "1.6";
+      el.configTopicInput.value = defaultConfigTopic(state.current.id);
+      const topic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
+      el.lightTopicInput.value = topic;
+      const fmt = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
+      el.lightPayloadFormat.value = fmt;
+      el.boardsCount.value = String((state.current.boards || []).length);
+      el.toControl.href = `/instance/${encodeURIComponent(state.current.id)}`;
+      renderBoards();
+    }
+
+    function renderBoards() {
+      state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
+      el.boardsCount.value = String(state.current.boards.length);
+      el.boards.innerHTML = "";
+
+      if (!state.current.boards.length) {
+        const p = document.createElement("p");
+        p.className = "small";
+        p.textContent = "Nessuna scheda.";
+        el.boards.appendChild(p);
+        return;
+      }
+
+      state.current.boards.forEach((board, bi) => {
+        const wrap = document.createElement("article");
+        wrap.className = "board";
+
+        const head = document.createElement("div");
+        head.className = "board-head";
+        const title = document.createElement("h3");
+        title.textContent = `Scheda ${bi + 1} • ${KIND_META[board.kind].label}`;
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "danger";
+        del.textContent = "Rimuovi";
+        del.onclick = () => { state.current.boards.splice(bi, 1); renderBoards(); };
+        head.appendChild(title);
+        head.appendChild(del);
+        wrap.appendChild(head);
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        function field(label, value, onChange, type = "text") {
+          const l = document.createElement("label");
+          l.textContent = label;
+          const i = document.createElement("input");
+          i.type = type;
+          i.value = value;
+          i.onchange = () => onChange(i.value);
+          l.appendChild(i);
+          return { l, i };
+        }
+
+        const idF = field("ID scheda", board.id, (v) => { board.id = slugify(v, `board-${bi + 1}`); renderBoards(); });
+        row.appendChild(idF.l);
+        const nameF = field("Nome scheda", board.name, (v) => { board.name = cleanText(v, board.id); });
+        row.appendChild(nameF.l);
+        const addrF = field("Indirizzo", String(board.address), (v) => { board.address = clamp(toInt(v, board.address), 0, 254); }, "number");
+        addrF.i.min = "0"; addrF.i.max = "254";
+        row.appendChild(addrF.l);
+
+        const kindL = document.createElement("label");
+        kindL.textContent = "Tipo";
+        const kindS = document.createElement("select");
+        for (const [val, meta] of Object.entries(KIND_META)) {
+          const o = document.createElement("option");
+          o.value = val;
+          o.textContent = meta.label;
+          if (val === board.kind) o.selected = true;
+          kindS.appendChild(o);
+        }
+        kindS.onchange = () => { board.kind = KIND_META[kindS.value] ? kindS.value : "light"; state.current.boards[bi] = normalizeBoard(board, bi); renderBoards(); };
+        kindL.appendChild(kindS);
+        row.appendChild(kindL);
+
+        const max = KIND_META[board.kind].maxChannels;
+        const fromF = field("Canale da", String(board.channelStart), (v) => { board.channelStart = clamp(toInt(v, board.channelStart), 1, max); state.current.boards[bi] = normalizeBoard(board, bi); renderBoards(); }, "number");
+        fromF.i.min = "1"; fromF.i.max = String(max);
+        row.appendChild(fromF.l);
+        const toF = field("Canale a", String(board.channelEnd), (v) => { board.channelEnd = clamp(toInt(v, board.channelEnd), 1, max); state.current.boards[bi] = normalizeBoard(board, bi); renderBoards(); }, "number");
+        toF.i.min = "1"; toF.i.max = String(max);
+        row.appendChild(toF.l);
+
+        wrap.appendChild(row);
+
+        const channels = document.createElement("div");
+        channels.className = "channels";
+        board.channels.forEach((ch, ci) => {
+          const c = document.createElement("div");
+          c.className = "channel";
+          const id = document.createElement("div");
+          id.className = "small";
+          id.textContent = `C${ch.channel}`;
+          const n = document.createElement("input");
+          n.value = ch.name;
+          n.oninput = () => { board.channels[ci].name = cleanText(n.value, defaultChannelName(board.kind, ch.channel)); };
+          const r = document.createElement("input");
+          r.value = ch.room;
+          r.oninput = () => { board.channels[ci].room = cleanText(r.value, "Senza stanza"); };
+          c.appendChild(id); c.appendChild(n); c.appendChild(r);
+          channels.appendChild(c);
+        });
+        wrap.appendChild(channels);
+
+        el.boards.appendChild(wrap);
+      });
+    }
+
+    function currentPayload() {
+      if (!state.current) return null;
+      state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
+      return {
+        id: state.current.id,
+        name: cleanText(el.instanceName.value, state.current.id),
+        protocolVersion: "1.6",
+        mqtt: {
+          lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+          lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
+        },
+        boards: state.current.boards
+      };
+    }
+
+    async function loadInstances(preferredId = "") {
+      const res = await api("/api/instances");
+      state.instances = res.instances || [];
+      renderInstances();
+      if (preferredId && state.instances.some((x) => x.id === preferredId)) return loadInstance(preferredId);
+      if (state.currentId && state.instances.some((x) => x.id === state.currentId)) return loadInstance(state.currentId);
+      if (state.instances.length) return loadInstance(state.instances[0].id);
+      state.current = null; state.currentId = null; renderEditor();
+    }
+
+    async function loadInstance(instanceId) {
+      const id = slugify(instanceId, "dr154-1");
+      const res = await api(`/api/instances/${encodeURIComponent(id)}`);
+      state.current = res.instance;
+      state.currentId = res.instance.id;
+      renderInstances();
+      renderEditor();
+    }
+
+    async function createInstance(ev) {
+      ev.preventDefault();
+      try {
+        const id = slugify(el.newId.value, "dr154-1");
+        const name = cleanText(el.newName.value, id);
+        await api("/api/instances", { method: "POST", body: JSON.stringify({ id, name, boards: [] }) });
+        el.newId.value = ""; el.newName.value = "";
+        note(`Istanza '${id}' creata.`);
+        await loadInstances(id);
+      } catch (err) { note(err.message, true); }
+    }
+
+    async function saveCurrent() {
+      if (!state.current) return;
+      try {
+        const payload = currentPayload();
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, { method: "PUT", body: JSON.stringify(payload) });
+        state.current = res.instance;
+        state.currentId = res.instance.id;
+        note("Configurazione salvata.");
+        await loadInstances(state.current.id);
+      } catch (err) { note(err.message, true); }
+    }
+
+    async function publishCurrent() {
+      if (!state.current) return;
+      try {
+        const payload = currentPayload();
+        const saved = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+        state.current = saved.instance;
+        state.currentId = saved.instance.id;
+        await loadInstances(state.current.id);
+        const topic = cleanText(el.configTopicInput.value, defaultConfigTopic(state.current.id));
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/publish`, {
+          method: "POST",
+          body: JSON.stringify({ topic })
+        });
+        note(`Configurazione pubblicata su '${res.topic}'.`);
+      } catch (err) {
+        note(err.message, true);
+      }
+    }
+
+    async function deleteCurrent() {
+      if (!state.current) return;
+      if (!window.confirm(`Eliminare istanza '${state.current.id}'?`)) return;
+      try {
+        const id = state.current.id;
+        await api(`/api/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
+        note(`Istanza '${id}' eliminata.`);
+        await loadInstances("");
+      } catch (err) { note(err.message, true); }
+    }
+
+    function addBoard() {
+      if (!state.current) return;
+      state.current.boards.push(normalizeBoard({}, state.current.boards.length));
+      renderBoards();
+    }
+
+    async function bootstrap() {
+      try {
+        const meta = await api("/api/meta");
+        state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
+      } catch (_) {
+        state.mqttBaseTopic = "dr154";
+      }
+      await loadInstances(slugify(forcedInstanceFromUrl(), ""));
+      note("Pronto.");
+    }
+
+    el.createForm.addEventListener("submit", createInstance);
+    el.addBoard.addEventListener("click", addBoard);
+    el.saveBtn.addEventListener("click", saveCurrent);
+    el.publishBtn.addEventListener("click", publishCurrent);
+    el.deleteBtn.addEventListener("click", deleteCurrent);
+
+    bootstrap().catch((err) => note(err.message, true));
+  </script>
+</body>
+</html>

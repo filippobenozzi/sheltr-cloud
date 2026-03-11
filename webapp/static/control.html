@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#191919">
+  <title>Sheltr Control</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <style>
+    :root { --bg:#191919; --section:#282828; --fg:#f0efed; --muted:#bcbab6; --bd:#bcbab6; --s1:4px; --s2:8px; --s3:12px; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,Monaco,Liberation Mono,monospace; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:var(--s3); min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px/1.35 var(--mono); }
+    .brand { display:flex; align-items:center; gap:var(--s2); margin:0; }
+    .logo { width:28px; height:28px; display:block; flex:0 0 28px; }
+    .layout { display:grid; grid-template-columns:280px 1fr; gap:var(--s2); }
+    .box { background:var(--section); border:1px solid var(--bd); border-radius:6px; padding:var(--s3); }
+    .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s2); gap:var(--s2); flex-wrap:wrap; }
+    h1 { font-size:17px; margin:0; }
+    h2 { font-size:14px; margin:0 0 var(--s2); color:var(--muted); }
+    .small { font-size:12px; color:var(--muted); margin:0; }
+    .stack { display:grid; gap:var(--s2); }
+    .row { display:flex; gap:var(--s2); flex-wrap:wrap; align-items:flex-end; }
+    label { display:flex; flex-direction:column; gap:var(--s1); font-size:12px; color:var(--muted); min-width:180px; }
+    input, select, button { font:12px/1.2 var(--mono); }
+    input, select { border:1px solid var(--bd); border-radius:6px; padding:6px; background:var(--section); color:var(--fg); }
+    button { border:1px solid var(--bd); background:#191919; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+    button:hover { background:#111; }
+    button.pri { background:#1e3a57; border-color:#1e3a57; }
+    button.pri:hover { background:#274967; }
+    button.lon, button.lon:hover { background:#1b6b2f; border-color:#1b6b2f; color:#fff; }
+    button.loff, button.loff:hover { background:#9c252d; border-color:#9c252d; color:#fff; }
+    .instances { display:grid; gap:var(--s2); }
+    .instance-item { border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center; gap:var(--s2); }
+    .instance-item.active { background:#111; border-color:#fff; }
+    .meta { color:var(--muted); font-size:11px; }
+    .lights { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:var(--s2); margin-top:var(--s2); }
+    .card { border:1px solid var(--bd); border-radius:6px; padding:var(--s2); background:var(--section); }
+    .card h3 { margin:0; font-size:13px; }
+    .state { font-size:12px; font-weight:700; margin:6px 0; }
+    .state.on { color:#7cc58a; }
+    .state.off { color:#ff8a80; }
+    .state.unknown { color:var(--muted); }
+    .actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .msg { margin-top:var(--s2); white-space:pre-wrap; font-size:12px; border:1px solid var(--bd); border-radius:6px; padding:var(--s2); min-height:24px; }
+    a.nav { color:var(--fg); text-decoration:none; border:1px solid var(--bd); border-radius:6px; padding:6px 10px; background:var(--section); font-size:12px; }
+    a.nav:hover { background:#2b2b2b; }
+    .foot { margin-top:auto; padding:var(--s3) 0 2px; text-align:center; font-style:italic; font:12px/1.3 var(--mono); color:var(--muted); }
+    .foot a { color:inherit; }
+    .hidden { display:none; }
+    @media (max-width: 980px) { .layout { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><img class="logo" src="/static/logo.svg" alt="Logo"><h1>Controllo Luci</h1></div>
+    <a class="nav" id="toConfig" href="/config">Vai a Config</a>
+  </div>
+
+  <main class="layout">
+    <aside class="box stack">
+      <h2>Istanze DR154</h2>
+      <div class="instances" id="instances"></div>
+    </aside>
+
+    <section class="box">
+      <div id="emptyState" class="small">Seleziona una istanza.</div>
+      <div id="panel" class="hidden">
+        <h2 id="instanceTitle">Istanza</h2>
+        <div class="row">
+          <label>Topic comandi luci<input id="lightTopicInput"></label>
+          <label>Formato payload
+            <select id="lightPayloadFormat">
+              <option value="frame_hex_space">Frame HEX con spazi</option>
+              <option value="frame_hex_compact">Frame HEX compatto</option>
+              <option value="frame_hex_space_crlf">Frame HEX con spazi + CRLF</option>
+              <option value="frame_hex_compact_crlf">Frame HEX compatto + CRLF</option>
+              <option value="frame_bytes">Frame bytes raw</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <button id="saveRouteBtn" type="button">Salva topic/formato</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button id="refreshBtn" type="button">Aggiorna stato</button>
+          <button id="allOnBtn" class="pri" type="button">Accendi tutte</button>
+          <button id="allOffBtn" class="pri" type="button">Spegni tutte</button>
+        </div>
+        <div id="lights" class="lights"></div>
+      </div>
+      <pre class="msg" id="msg"></pre>
+    </section>
+  </main>
+  <footer class="foot">not all those who wander are lost ~ <a href="https://filippo.im" target="_blank" rel="noopener">filippo.im</a></footer>
+
+  <script>
+    const state = { instances: [], current: null, currentId: null, lights: [], mqttBaseTopic: "dr154" };
+
+    const el = {
+      toConfig: document.getElementById("toConfig"),
+      instances: document.getElementById("instances"),
+      emptyState: document.getElementById("emptyState"),
+      panel: document.getElementById("panel"),
+      instanceTitle: document.getElementById("instanceTitle"),
+      lightTopicInput: document.getElementById("lightTopicInput"),
+      lightPayloadFormat: document.getElementById("lightPayloadFormat"),
+      saveRouteBtn: document.getElementById("saveRouteBtn"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      allOnBtn: document.getElementById("allOnBtn"),
+      allOffBtn: document.getElementById("allOffBtn"),
+      lights: document.getElementById("lights"),
+      msg: document.getElementById("msg")
+    };
+
+    function note(text, isError = false) {
+      el.msg.textContent = text || "";
+      el.msg.style.color = isError ? "#ff8a80" : "var(--fg)";
+    }
+
+    function cleanText(value, fallback = "") {
+      const txt = String(value ?? "").trim();
+      return txt || fallback;
+    }
+
+    function slugify(value, fallback) {
+      const out = cleanText(value, fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+      return out || fallback;
+    }
+
+    function defaultLightTopic(instanceId) {
+      return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    }
+
+    function forcedInstanceFromUrl() {
+      const parts = location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "instance" && parts[1]) return decodeURIComponent(parts[1]);
+      const q = new URLSearchParams(location.search).get("instance");
+      return q || "";
+    }
+
+    function renderInstances() {
+      el.instances.innerHTML = "";
+      if (!state.instances.length) {
+        const p = document.createElement("p");
+        p.className = "small";
+        p.textContent = "Nessuna istanza.";
+        el.instances.appendChild(p);
+        return;
+      }
+      for (const item of state.instances) {
+        const box = document.createElement("div");
+        box.className = `instance-item${item.id === state.currentId ? " active" : ""}`;
+        const left = document.createElement("div");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = item.name;
+        b.onclick = () => loadInstance(item.id);
+        const m = document.createElement("div");
+        m.className = "meta";
+        m.textContent = `${item.id} • ${item.boardsCount} schede`;
+        left.appendChild(b); left.appendChild(m);
+        const cfg = document.createElement("a");
+        cfg.className = "nav";
+        cfg.href = `/instance/${encodeURIComponent(item.id)}/config`;
+        cfg.textContent = "Config";
+        box.appendChild(left);
+        box.appendChild(cfg);
+        el.instances.appendChild(box);
+      }
+    }
+
+    function renderPanel() {
+      if (!state.current) {
+        el.emptyState.classList.remove("hidden");
+        el.panel.classList.add("hidden");
+        el.lights.innerHTML = "";
+        return;
+      }
+      el.emptyState.classList.add("hidden");
+      el.panel.classList.remove("hidden");
+      el.instanceTitle.textContent = `Istanza: ${state.current.name}`;
+      el.toConfig.href = `/instance/${encodeURIComponent(state.current.id)}/config`;
+      const topic = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
+      el.lightTopicInput.value = topic;
+      const fmt = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
+      el.lightPayloadFormat.value = fmt;
+      renderLights();
+    }
+
+    function renderLights() {
+      el.lights.innerHTML = "";
+      if (!state.lights.length) {
+        const p = document.createElement("p");
+        p.className = "small";
+        p.textContent = "Nessuna luce configurata.";
+        el.lights.appendChild(p);
+        return;
+      }
+
+      for (const light of state.lights) {
+        const card = document.createElement("article");
+        card.className = "card";
+        const h = document.createElement("h3");
+        h.textContent = light.name || light.id;
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const upd = light.stateUpdatedAt ? ` • upd ${new Date(light.stateUpdatedAt).toLocaleTimeString("it-IT")}` : "";
+        meta.textContent = `${light.room || "Senza stanza"} • ${light.id} • addr ${light.address}${upd}`;
+        const st = document.createElement("div");
+        const on = typeof light.isOn === "boolean" ? light.isOn : null;
+        st.className = `state ${on === null ? "unknown" : (on ? "on" : "off")}`;
+        st.textContent = on === null ? "Stato: sconosciuto" : `Stato: ${on ? "ON" : "OFF"}`;
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        ["on", "off", "toggle"].forEach((action) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = action.toUpperCase();
+          if (action === "on" && on === true) b.className = "pri lon";
+          if (action === "off" && on === false) b.className = "pri loff";
+          if (action === "toggle") b.className = "pri";
+          b.onclick = () => sendLightCommand(light, action);
+          actions.appendChild(b);
+        });
+
+        card.appendChild(h);
+        card.appendChild(meta);
+        card.appendChild(st);
+        card.appendChild(actions);
+        el.lights.appendChild(card);
+      }
+    }
+
+    async function loadLights(silent = false) {
+      if (!state.current) return;
+      try {
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights`);
+        state.lights = Array.isArray(res.lights) ? res.lights : [];
+        if (res.commandTopic) el.lightTopicInput.value = res.commandTopic;
+        if (res.payloadFormat) el.lightPayloadFormat.value = res.payloadFormat;
+        renderLights();
+        if (!silent) note(`Stato aggiornato (${state.lights.length} luci).`);
+      } catch (err) {
+        if (!silent) note(err.message, true);
+      }
+    }
+
+    async function sendLightCommand(light, action) {
+      if (!state.current) return;
+      try {
+        const payload = {
+          action,
+          topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+          payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf"),
+          lightId: light.id,
+          target: {
+            boardId: light.boardId,
+            boardName: light.boardName,
+            address: light.address,
+            channel: light.channel,
+            name: light.name,
+            room: light.room
+          }
+        };
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const sent = Array.isArray(res.sent) ? res.sent : [];
+        if (sent[0] && typeof sent[0].isOn === "boolean") {
+          const idx = state.lights.findIndex((x) => x.id === light.id);
+          if (idx >= 0) state.lights[idx].isOn = sent[0].isOn;
+          renderLights();
+        }
+        const frameHex = sent[0] && sent[0].frameHex ? sent[0].frameHex : "";
+        note(`Comando '${action}' inviato.${frameHex ? ` Frame: ${frameHex}` : ""}`);
+      } catch (err) {
+        note(err.message, true);
+      }
+    }
+
+    async function sendAll(action) {
+      if (!state.current) return;
+      try {
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/lights/command`, {
+          method: "POST",
+          body: JSON.stringify({
+            action,
+            all: true,
+            topic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+            payloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
+          })
+        });
+        const sent = Array.isArray(res.sent) ? res.sent : [];
+        const byId = new Map(sent.map((x) => [x.id, x]));
+        state.lights = state.lights.map((x) => {
+          const m = byId.get(x.id);
+          return m && typeof m.isOn === "boolean" ? { ...x, isOn: m.isOn } : x;
+        });
+        renderLights();
+        note(`Comando '${action}' inviato a ${sent.length} luci.`);
+      } catch (err) {
+        note(err.message, true);
+      }
+    }
+
+    async function saveRouting() {
+      if (!state.current) return;
+      try {
+        const payload = {
+          id: state.current.id,
+          name: state.current.name,
+          protocolVersion: state.current.protocolVersion || "1.6",
+          mqtt: {
+            lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
+            lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
+          },
+          boards: state.current.boards || []
+        };
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+        state.current = res.instance;
+        note("Topic/formato salvati.");
+      } catch (err) {
+        note(err.message, true);
+      }
+    }
+
+    async function loadInstances(preferredId = "") {
+      const res = await api("/api/instances");
+      state.instances = res.instances || [];
+      renderInstances();
+      if (preferredId && state.instances.some((x) => x.id === preferredId)) return loadInstance(preferredId);
+      if (state.currentId && state.instances.some((x) => x.id === state.currentId)) return loadInstance(state.currentId);
+      if (state.instances.length) return loadInstance(state.instances[0].id);
+      state.current = null; state.currentId = null; state.lights = []; renderPanel();
+    }
+
+    async function loadInstance(instanceId) {
+      const id = slugify(instanceId, "dr154-1");
+      const res = await api(`/api/instances/${encodeURIComponent(id)}`);
+      state.current = res.instance;
+      state.currentId = res.instance.id;
+      renderInstances();
+      renderPanel();
+      await loadLights(true);
+    }
+
+    async function bootstrap() {
+      try {
+        const meta = await api("/api/meta");
+        state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
+      } catch (_) {
+        state.mqttBaseTopic = "dr154";
+      }
+      await loadInstances(slugify(forcedInstanceFromUrl(), ""));
+      note("Pronto.");
+      window.setInterval(() => loadLights(true), 7000);
+    }
+
+    el.refreshBtn.addEventListener("click", () => loadLights(false));
+    el.allOnBtn.addEventListener("click", () => sendAll("on"));
+    el.allOffBtn.addEventListener("click", () => sendAll("off"));
+    el.saveRouteBtn.addEventListener("click", saveRouting);
+
+    bootstrap().catch((err) => note(err.message, true));
+  </script>
+</body>
+</html>

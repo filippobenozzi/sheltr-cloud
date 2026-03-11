@@ -18,7 +18,8 @@ docker compose up -d --build
 
 ## Endpoint esposti
 
-- Web UI: `http://<HOST>:8080`
+- Web UI controllo: `http://<HOST>:8080/control`
+- Web UI configurazione: `http://<HOST>:8080/config`
 - MQTT TCP: `<HOST>:1883`
 - MQTT WebSocket: `ws://<HOST>:9001`
 

@@ -386,13 +386,29 @@ def err(message: str, status: int = 400):
 
 @app.get("/")
 def root():
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(app.static_folder, "control.html")
+
+
+@app.get("/control")
+def control_page():
+    return send_from_directory(app.static_folder, "control.html")
+
+
+@app.get("/config")
+def config_page():
+    return send_from_directory(app.static_folder, "config.html")
 
 
 @app.get("/instance/<instance_id>")
 def instance_page(instance_id: str):
     _ = instance_id
-    return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(app.static_folder, "control.html")
+
+
+@app.get("/instance/<instance_id>/config")
+def instance_config_page(instance_id: str):
+    _ = instance_id
+    return send_from_directory(app.static_folder, "config.html")
 
 
 @app.get("/healthz")
