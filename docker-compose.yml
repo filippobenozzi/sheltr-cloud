@@ -1,0 +1,40 @@
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:-filippo}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-filippo1994}
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "${MQTT_WS_PORT:-9001}:9001"
+    command: ["/bin/sh", "/mosquitto/config/init-mosquitto.sh"]
+    volumes:
+      - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mqtt/init-mosquitto.sh:/mosquitto/config/init-mosquitto.sh:ro
+      - mqtt_data:/mosquitto/data
+      - mqtt_log:/mosquitto/log
+
+  web:
+    build:
+      context: ./webapp
+    restart: unless-stopped
+    depends_on:
+      - mqtt
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      APP_PORT: "8080"
+      CONFIG_FILE: /data/config.json
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: ${MQTT_USERNAME:-filippo}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-filippo1994}
+      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC:-dr154}
+    volumes:
+      - web_data:/data
+
+volumes:
+  mqtt_data:
+  mqtt_log:
+  web_data:

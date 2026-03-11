@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DR154 Config Hub</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --card: #fffaf2;
+      --ink: #221f1a;
+      --muted: #736a60;
+      --line: #d8cdbc;
+      --brand: #0f6a63;
+      --brand-2: #b35f2a;
+      --danger: #a63535;
+      --shadow: 0 16px 38px -24px rgba(28, 25, 21, 0.44);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font: 14px/1.45 "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 600px at -5% -5%, #d8e5dc 0%, transparent 55%),
+        radial-gradient(900px 500px at 110% 10%, #eed9c6 0%, transparent 50%),
+        var(--bg);
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .panel, .editor {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 14px; }
+    .editor { padding: 18px; }
+    h1, h2, h3, h4 { margin: 0; font-family: "Space Grotesk", "IBM Plex Sans", sans-serif; }
+    h1 { font-size: 22px; margin-bottom: 2px; }
+    h2 { font-size: 18px; }
+    h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 8px; }
+    p.meta { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+    .small { font-size: 12px; color: var(--muted); }
+    form, .stack { display: grid; gap: 8px; }
+    input, select, button, textarea {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 10px;
+    }
+    input:focus, select:focus, button:focus, textarea:focus {
+      outline: 2px solid color-mix(in srgb, var(--brand) 40%, white);
+      outline-offset: 1px;
+    }
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #ffffff 0%, #f6ede1 100%);
+      transition: transform .12s ease, border-color .12s ease, background .12s ease;
+    }
+    button:hover {
+      transform: translateY(-1px);
+      border-color: #c8b9a3;
+      background: linear-gradient(180deg, #fff 0%, #f3e6d7 100%);
+    }
+    button.primary {
+      color: #fff;
+      background: linear-gradient(180deg, #12857c 0%, #0f6a63 100%);
+      border-color: #0f6a63;
+    }
+    button.primary:hover { background: linear-gradient(180deg, #15968b 0%, #11766f 100%); }
+    button.secondary {
+      color: #fff;
+      background: linear-gradient(180deg, #c36d35 0%, #9f5223 100%);
+      border-color: #9f5223;
+    }
+    button.secondary:hover { background: linear-gradient(180deg, #d27a41 0%, #ad5b28 100%); }
+    button.danger {
+      color: #fff;
+      background: linear-gradient(180deg, #bf4d4d 0%, #982e2e 100%);
+      border-color: #982e2e;
+    }
+    button.link {
+      color: var(--brand);
+      padding: 0;
+      border: none;
+      background: transparent;
+      text-decoration: underline;
+      box-shadow: none;
+    }
+    button.link:hover {
+      transform: none;
+      border: none;
+      background: transparent;
+    }
+    .instances {
+      border-top: 1px solid var(--line);
+      margin-top: 14px;
+      padding-top: 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .instance-item {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px;
+      align-items: center;
+    }
+    .instance-item.active {
+      border-color: var(--brand);
+      background: #ecfaf8;
+    }
+    .instance-meta {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .editor-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 8px;
+    }
+    .board {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .board-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .channels {
+      margin-top: 10px;
+      border-top: 1px dashed var(--line);
+      padding-top: 8px;
+      display: grid;
+      gap: 6px;
+    }
+    .channel {
+      display: grid;
+      grid-template-columns: 70px 1fr 170px;
+      gap: 8px;
+      align-items: center;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    #message {
+      margin-top: 14px;
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      color: var(--muted);
+      background: #fff;
+    }
+    .hidden { display: none !important; }
+    @media (max-width: 1024px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .row { grid-template-columns: 1fr 1fr; }
+      .channel { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <aside class="panel">
+      <h1>DR154 Config Hub</h1>
+      <p class="meta">Broker MQTT autenticato e configurazione multi-istanza protocollo 1.6.</p>
+
+      <h3>Crea Nuova Istanza</h3>
+      <form id="createForm">
+        <input id="newId" placeholder="ID (es: dr154-villa)" required>
+        <input id="newName" placeholder="Nome (es: Villa Piano Terra)" required>
+        <button class="primary" type="submit">Crea istanza</button>
+      </form>
+
+      <div class="instances">
+        <h3>Istanze Disponibili</h3>
+        <div id="instancesList" class="stack"></div>
+      </div>
+    </aside>
+
+    <section class="editor">
+      <div id="emptyState" class="empty">Crea o seleziona una istanza per configurare schede e canali.</div>
+      <div id="editorState" class="hidden">
+        <div class="editor-head">
+          <div>
+            <h2 id="instanceTitle">Istanza</h2>
+            <p class="meta" id="instanceInfo"></p>
+          </div>
+          <a id="instanceLink" target="_blank" rel="noopener" class="small"></a>
+        </div>
+
+        <div class="row">
+          <label>
+            Nome istanza
+            <input id="instanceName">
+          </label>
+          <label>
+            Topic config MQTT
+            <input id="topicInput" placeholder="dr154/<istanza>/config">
+          </label>
+          <label>
+            Versione protocollo
+            <input id="protocolVersion" value="1.6" readonly>
+          </label>
+          <label>
+            Schede configurate
+            <input id="boardsCount" readonly>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="addBoard" type="button">Aggiungi scheda</button>
+        </div>
+
+        <div id="boards"></div>
+
+        <div class="actions">
+          <button id="saveBtn" class="primary" type="button">Salva configurazione</button>
+          <button id="publishBtn" class="secondary" type="button">Pubblica su MQTT</button>
+          <button id="deleteBtn" class="danger" type="button">Elimina istanza</button>
+        </div>
+      </div>
+      <pre id="message"></pre>
+    </section>
+  </main>
+
+  <script>
+    const KIND_META = {
+      light: { label: "Luci", maxChannels: 8, prefix: "Luce" },
+      shutter: { label: "Tapparelle", maxChannels: 4, prefix: "Tapparella" },
+      dimmer: { label: "Dimmer", maxChannels: 1, prefix: "Dimmer" },
+      thermostat: { label: "Termostati", maxChannels: 8, prefix: "Termostato" }
+    };
+
+    const state = {
+      instances: [],
+      current: null,
+      currentId: null,
+      mqttBaseTopic: "dr154"
+    };
+
+    const el = {
+      createForm: document.getElementById("createForm"),
+      newId: document.getElementById("newId"),
+      newName: document.getElementById("newName"),
+      instancesList: document.getElementById("instancesList"),
+      emptyState: document.getElementById("emptyState"),
+      editorState: document.getElementById("editorState"),
+      instanceTitle: document.getElementById("instanceTitle"),
+      instanceInfo: document.getElementById("instanceInfo"),
+      instanceLink: document.getElementById("instanceLink"),
+      instanceName: document.getElementById("instanceName"),
+      topicInput: document.getElementById("topicInput"),
+      protocolVersion: document.getElementById("protocolVersion"),
+      boardsCount: document.getElementById("boardsCount"),
+      addBoard: document.getElementById("addBoard"),
+      boards: document.getElementById("boards"),
+      saveBtn: document.getElementById("saveBtn"),
+      publishBtn: document.getElementById("publishBtn"),
+      deleteBtn: document.getElementById("deleteBtn"),
+      message: document.getElementById("message")
+    };
+
+    function note(text, isError = false) {
+      el.message.textContent = text || "";
+      el.message.style.color = isError ? "#982e2e" : "#1d4f49";
+    }
+
+    function toInt(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.trunc(n) : fallback;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function cleanText(value, fallback = "") {
+      const text = String(value ?? "").trim();
+      return text || fallback;
+    }
+
+    function slugify(value, fallback) {
+      const raw = cleanText(value, fallback).toLowerCase();
+      return raw
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "") || fallback;
+    }
+
+    function defaultChannelName(kind, channel) {
+      return `${KIND_META[kind]?.prefix || "Canale"} ${channel}`;
+    }
+
+    function normalizeBoard(raw, index) {
+      const board = raw && typeof raw === "object" ? raw : {};
+      const kind = KIND_META[board.kind] ? board.kind : "light";
+      const max = KIND_META[kind].maxChannels;
+      const id = slugify(board.id || board.name || `board-${index + 1}`, `board-${index + 1}`);
+      const name = cleanText(board.name, id);
+      const address = clamp(toInt(board.address, index + 1), 0, 254);
+      let channelStart = clamp(toInt(board.channelStart, 1), 1, max);
+      let channelEnd = clamp(toInt(board.channelEnd, max), 1, max);
+      if (channelEnd < channelStart) channelEnd = channelStart;
+
+      const byChannel = new Map();
+      for (const entry of Array.isArray(board.channels) ? board.channels : []) {
+        const channel = clamp(toInt(entry?.channel, -1), 1, max);
+        if (channel >= channelStart && channel <= channelEnd) {
+          byChannel.set(channel, entry || {});
+        }
+      }
+
+      const channels = [];
+      for (let channel = channelStart; channel <= channelEnd; channel += 1) {
+        const saved = byChannel.get(channel) || {};
+        channels.push({
+          channel,
+          name: cleanText(saved.name, defaultChannelName(kind, channel)),
+          room: cleanText(saved.room, "Senza stanza")
+        });
+      }
+
+      return { id, name, address, kind, channelStart, channelEnd, channels };
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    function forcedInstanceFromUrl() {
+      const chunks = location.pathname.split("/").filter(Boolean);
+      if (chunks[0] === "instance" && chunks[1]) return decodeURIComponent(chunks[1]);
+      const q = new URLSearchParams(location.search).get("instance");
+      return q ? q : "";
+    }
+
+    function renderInstancesList() {
+      el.instancesList.innerHTML = "";
+      if (!state.instances.length) {
+        const empty = document.createElement("div");
+        empty.className = "small";
+        empty.textContent = "Nessuna istanza disponibile.";
+        el.instancesList.appendChild(empty);
+        return;
+      }
+
+      for (const item of state.instances) {
+        const row = document.createElement("div");
+        row.className = `instance-item${state.currentId === item.id ? " active" : ""}`;
+
+        const selectButton = document.createElement("button");
+        selectButton.type = "button";
+        selectButton.textContent = item.name;
+        selectButton.onclick = () => loadInstance(item.id);
+
+        const meta = document.createElement("div");
+        meta.className = "instance-meta";
+        meta.textContent = `${item.id} • ${item.boardsCount} schede`;
+
+        const left = document.createElement("div");
+        left.appendChild(selectButton);
+        left.appendChild(meta);
+
+        const open = document.createElement("a");
+        open.href = `/instance/${encodeURIComponent(item.id)}`;
+        open.target = "_blank";
+        open.rel = "noopener";
+        open.className = "small";
+        open.textContent = "Apri";
+
+        row.appendChild(left);
+        row.appendChild(open);
+        el.instancesList.appendChild(row);
+      }
+    }
+
+    function renderEditor() {
+      if (!state.current) {
+        el.emptyState.classList.remove("hidden");
+        el.editorState.classList.add("hidden");
+        el.boards.innerHTML = "";
+        return;
+      }
+
+      el.emptyState.classList.add("hidden");
+      el.editorState.classList.remove("hidden");
+      el.instanceTitle.textContent = state.current.name;
+      el.instanceInfo.textContent = `${state.current.id} • aggiornato: ${state.current.updatedAt || "-"}`;
+      el.instanceLink.href = `/instance/${encodeURIComponent(state.current.id)}`;
+      el.instanceLink.textContent = `${location.origin}/instance/${state.current.id}`;
+      el.instanceName.value = state.current.name;
+      el.protocolVersion.value = state.current.protocolVersion || "1.6";
+      el.topicInput.value = `${state.mqttBaseTopic}/${state.current.id}/config`;
+      el.boardsCount.value = String(state.current.boards.length);
+      renderBoards();
+    }
+
+    function createLabeledInput(labelText, type = "text", value = "", onChange = null) {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      const input = document.createElement("input");
+      input.type = type;
+      input.value = value;
+      if (onChange) input.onchange = () => onChange(input.value);
+      label.appendChild(input);
+      return { label, input };
+    }
+
+    function createLabeledSelect(labelText, value, options, onChange) {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      const select = document.createElement("select");
+      for (const opt of options) {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        if (opt.value === value) option.selected = true;
+        select.appendChild(option);
+      }
+      select.onchange = () => onChange(select.value);
+      label.appendChild(select);
+      return { label, select };
+    }
+
+    function normalizeCurrentBoards() {
+      if (!state.current) return;
+      state.current.boards = (state.current.boards || []).map((board, idx) => normalizeBoard(board, idx));
+      el.boardsCount.value = String(state.current.boards.length);
+    }
+
+    function renderBoards() {
+      normalizeCurrentBoards();
+      el.boards.innerHTML = "";
+
+      if (!state.current.boards.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Nessuna scheda. Premi 'Aggiungi scheda'.";
+        el.boards.appendChild(empty);
+        return;
+      }
+
+      state.current.boards.forEach((board, boardIndex) => {
+        const card = document.createElement("article");
+        card.className = "board";
+
+        const head = document.createElement("div");
+        head.className = "board-head";
+
+        const title = document.createElement("h3");
+        title.textContent = `Scheda ${boardIndex + 1} • ${KIND_META[board.kind].label}`;
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "danger";
+        removeButton.textContent = "Rimuovi";
+        removeButton.onclick = () => {
+          state.current.boards.splice(boardIndex, 1);
+          renderBoards();
+        };
+
+        head.appendChild(title);
+        head.appendChild(removeButton);
+        card.appendChild(head);
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const boardId = createLabeledInput("ID scheda", "text", board.id, (value) => {
+          board.id = slugify(value, `board-${boardIndex + 1}`);
+          renderBoards();
+        });
+        row.appendChild(boardId.label);
+
+        const boardName = createLabeledInput("Nome scheda", "text", board.name, (value) => {
+          board.name = cleanText(value, board.id);
+        });
+        row.appendChild(boardName.label);
+
+        const address = createLabeledInput("Indirizzo", "number", String(board.address), (value) => {
+          board.address = clamp(toInt(value, board.address), 0, 254);
+        });
+        address.input.min = "0";
+        address.input.max = "254";
+        row.appendChild(address.label);
+
+        const kind = createLabeledSelect(
+          "Tipo",
+          board.kind,
+          Object.entries(KIND_META).map(([value, meta]) => ({ value, label: meta.label })),
+          (value) => {
+            board.kind = value in KIND_META ? value : "light";
+            state.current.boards[boardIndex] = normalizeBoard(board, boardIndex);
+            renderBoards();
+          }
+        );
+        row.appendChild(kind.label);
+
+        const max = KIND_META[board.kind].maxChannels;
+        const rangeStart = createLabeledInput("Canale da", "number", String(board.channelStart), (value) => {
+          board.channelStart = clamp(toInt(value, board.channelStart), 1, max);
+          state.current.boards[boardIndex] = normalizeBoard(board, boardIndex);
+          renderBoards();
+        });
+        rangeStart.input.min = "1";
+        rangeStart.input.max = String(max);
+        row.appendChild(rangeStart.label);
+
+        const rangeEnd = createLabeledInput("Canale a", "number", String(board.channelEnd), (value) => {
+          board.channelEnd = clamp(toInt(value, board.channelEnd), 1, max);
+          state.current.boards[boardIndex] = normalizeBoard(board, boardIndex);
+          renderBoards();
+        });
+        rangeEnd.input.min = "1";
+        rangeEnd.input.max = String(max);
+        row.appendChild(rangeEnd.label);
+
+        card.appendChild(row);
+
+        const channelsWrap = document.createElement("div");
+        channelsWrap.className = "channels";
+
+        board.channels.forEach((channel, channelIndex) => {
+          const rowChannel = document.createElement("div");
+          rowChannel.className = "channel";
+
+          const cLabel = document.createElement("div");
+          cLabel.textContent = `C${channel.channel}`;
+          cLabel.className = "small";
+          rowChannel.appendChild(cLabel);
+
+          const cName = document.createElement("input");
+          cName.value = channel.name;
+          cName.placeholder = defaultChannelName(board.kind, channel.channel);
+          cName.oninput = () => {
+            board.channels[channelIndex].name = cleanText(cName.value, defaultChannelName(board.kind, channel.channel));
+          };
+          rowChannel.appendChild(cName);
+
+          const cRoom = document.createElement("input");
+          cRoom.value = channel.room;
+          cRoom.placeholder = "Stanza";
+          cRoom.oninput = () => {
+            board.channels[channelIndex].room = cleanText(cRoom.value, "Senza stanza");
+          };
+          rowChannel.appendChild(cRoom);
+
+          channelsWrap.appendChild(rowChannel);
+        });
+
+        card.appendChild(channelsWrap);
+        el.boards.appendChild(card);
+      });
+    }
+
+    async function loadInstances(preferredId = "") {
+      const res = await api("/api/instances");
+      state.instances = res.instances || [];
+      renderInstancesList();
+
+      if (preferredId && state.instances.some((x) => x.id === preferredId)) {
+        await loadInstance(preferredId);
+        return;
+      }
+      if (state.currentId && state.instances.some((x) => x.id === state.currentId)) {
+        await loadInstance(state.currentId);
+        return;
+      }
+      if (state.instances.length) {
+        await loadInstance(state.instances[0].id);
+        return;
+      }
+      state.current = null;
+      state.currentId = null;
+      renderEditor();
+    }
+
+    async function loadInstance(instanceId) {
+      const id = slugify(instanceId, "dr154-1");
+      const res = await api(`/api/instances/${encodeURIComponent(id)}`);
+      state.current = res.instance;
+      state.currentId = res.instance.id;
+      renderInstancesList();
+      renderEditor();
+    }
+
+    async function createInstance(event) {
+      event.preventDefault();
+      try {
+        const id = slugify(el.newId.value, "dr154-1");
+        const name = cleanText(el.newName.value, id);
+        const payload = { id, name, boards: [] };
+        await api("/api/instances", { method: "POST", body: JSON.stringify(payload) });
+        el.newId.value = "";
+        el.newName.value = "";
+        note(`Istanza '${id}' creata.`);
+        await loadInstances(id);
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    function currentPayload() {
+      if (!state.current) return null;
+      normalizeCurrentBoards();
+      return {
+        id: state.current.id,
+        name: cleanText(el.instanceName.value, state.current.id),
+        protocolVersion: "1.6",
+        boards: state.current.boards
+      };
+    }
+
+    async function saveCurrent() {
+      if (!state.current) return null;
+      const payload = currentPayload();
+      const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+      state.current = res.instance;
+      state.currentId = res.instance.id;
+      await loadInstances(state.current.id);
+      return res.instance;
+    }
+
+    async function saveCurrentWithFeedback() {
+      try {
+        await saveCurrent();
+        note("Configurazione salvata.");
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    async function publishCurrent() {
+      if (!state.current) return;
+      try {
+        await saveCurrent();
+        const topic = cleanText(el.topicInput.value, `${state.mqttBaseTopic}/${state.current.id}/config`);
+        const res = await api(`/api/instances/${encodeURIComponent(state.current.id)}/publish`, {
+          method: "POST",
+          body: JSON.stringify({ topic })
+        });
+        note(`Configurazione pubblicata su topic '${res.topic}' (retain=true, qos=${res.qos}).`);
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    async function deleteCurrent() {
+      if (!state.current) return;
+      const ok = window.confirm(`Eliminare l'istanza '${state.current.id}'?`);
+      if (!ok) return;
+      try {
+        const id = state.current.id;
+        await api(`/api/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
+        note(`Istanza '${id}' eliminata.`);
+        await loadInstances("");
+      } catch (error) {
+        note(error.message, true);
+      }
+    }
+
+    function addBoard() {
+      if (!state.current) return;
+      const next = normalizeBoard({}, state.current.boards.length);
+      state.current.boards.push(next);
+      renderBoards();
+    }
+
+    async function bootstrap() {
+      try {
+        const meta = await api("/api/meta");
+        state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
+      } catch (_) {
+        state.mqttBaseTopic = "dr154";
+      }
+
+      const forced = forcedInstanceFromUrl();
+      await loadInstances(slugify(forced, ""));
+      note("Pronto.");
+    }
+
+    el.createForm.addEventListener("submit", createInstance);
+    el.addBoard.addEventListener("click", addBoard);
+    el.saveBtn.addEventListener("click", saveCurrentWithFeedback);
+    el.publishBtn.addEventListener("click", publishCurrent);
+    el.deleteBtn.addEventListener("click", deleteCurrent);
+
+    bootstrap().catch((error) => note(error.message, true));
+  </script>
+</body>
+</html>
