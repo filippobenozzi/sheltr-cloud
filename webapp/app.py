@@ -40,6 +40,13 @@ THERMOSTAT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("THERMOSTAT_RESPO
 THERMOSTAT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_RETRY_DELAY_MS", "400")))
 THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS", "700")))
 THERMOSTAT_COMMAND_FRAME_GAP_MS = max(0, int(os.environ.get("THERMOSTAT_COMMAND_FRAME_GAP_MS", "220")))
+THERMOSTAT_COMMAND_VARIANT_GAP_MS = max(0, int(os.environ.get("THERMOSTAT_COMMAND_VARIANT_GAP_MS", "80")))
+THERMOSTAT_MULTI_ENCODING = os.environ.get("THERMOSTAT_MULTI_ENCODING", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip().lower() in {
     "1",
     "true",
@@ -1476,6 +1483,35 @@ def payload_from_frame(
     return frame_payload_for_format(frame, payload_format), frame_hex
 
 
+def thermostat_payload_variants(
+    *,
+    frame: bytes,
+    primary_payload: Any,
+    payload_format: str,
+) -> list[Any]:
+    variants: list[Any] = [primary_payload]
+    if not THERMOSTAT_MULTI_ENCODING or not payload_format.startswith("frame_"):
+        return variants
+
+    variants.extend(
+        [
+            frame_payload_for_format(frame, "frame_hex_compact_crlf"),
+            frame_to_hex(frame, compact=True) + "\r",
+            frame,
+        ]
+    )
+
+    unique: list[Any] = []
+    seen: set[bytes] = set()
+    for payload in variants:
+        raw = mqtt_payload_bytes(payload)
+        if raw in seen:
+            continue
+        seen.add(raw)
+        unique.append(payload)
+    return unique
+
+
 def add_payload_debug(item: dict[str, Any], payload: Any) -> None:
     if isinstance(payload, (bytes, bytearray)):
         item["payloadBytesHex"] = bytes(payload).hex().upper()
@@ -1846,7 +1882,19 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            frames_to_send.append({"type": "mode", "payload": mode_payload, "frameHex": mode_hex})
+            mode_variants = thermostat_payload_variants(
+                frame=mode_frame,
+                primary_payload=mode_payload,
+                payload_format=effective_payload_format,
+            )
+            frames_to_send.append(
+                {
+                    "type": "mode",
+                    "payload": mode_payload,
+                    "payloadVariants": mode_variants,
+                    "frameHex": mode_hex,
+                }
+            )
             next_mode = requested_mode
 
         if requested_setpoint is not None:
@@ -1871,7 +1919,19 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            frames_to_send.append({"type": "power_off", "payload": off_payload, "frameHex": off_hex})
+            off_variants = thermostat_payload_variants(
+                frame=power_off_frame,
+                primary_payload=off_payload,
+                payload_format=effective_payload_format,
+            )
+            frames_to_send.append(
+                {
+                    "type": "power_off",
+                    "payload": off_payload,
+                    "payloadVariants": off_variants,
+                    "frameHex": off_hex,
+                }
+            )
             next_power = False
         elif requested_setpoint is not None or requested_power is True:
             set_i, set_d = split_temperature(next_setpoint)
@@ -1894,21 +1954,40 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            frames_to_send.append({"type": "setpoint", "payload": on_payload, "frameHex": on_hex})
+            on_variants = thermostat_payload_variants(
+                frame=power_on_frame,
+                primary_payload=on_payload,
+                payload_format=effective_payload_format,
+            )
+            frames_to_send.append(
+                {
+                    "type": "setpoint",
+                    "payload": on_payload,
+                    "payloadVariants": on_variants,
+                    "frameHex": on_hex,
+                }
+            )
             next_power = True
 
         if not frames_to_send:
             raise ValueError("Nessun comando termostato generato")
 
         for frame_idx, frame_item in enumerate(frames_to_send):
-            mqtt_publish(
-                effective_topic,
-                frame_item["payload"],
-                qos=MQTT_COMMAND_QOS,
-                retain=False,
-                retries=MQTT_COMMAND_RETRIES,
-                retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
-            )
+            payload_variants = frame_item.get("payloadVariants")
+            if not isinstance(payload_variants, list) or not payload_variants:
+                payload_variants = [frame_item["payload"]]
+
+            for variant_idx, variant_payload in enumerate(payload_variants):
+                mqtt_publish(
+                    effective_topic,
+                    variant_payload,
+                    qos=MQTT_COMMAND_QOS,
+                    retain=False,
+                    retries=MQTT_COMMAND_RETRIES,
+                    retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
+                )
+                if variant_idx < (len(payload_variants) - 1) and THERMOSTAT_COMMAND_VARIANT_GAP_MS > 0:
+                    time.sleep(THERMOSTAT_COMMAND_VARIANT_GAP_MS / 1000.0)
             if frame_idx < (len(frames_to_send) - 1) and THERMOSTAT_COMMAND_FRAME_GAP_MS > 0:
                 time.sleep(THERMOSTAT_COMMAND_FRAME_GAP_MS / 1000.0)
 
@@ -1949,11 +2028,15 @@ def execute_thermostat_targets(
                 state_verified = False
                 verify_reasons.append("setpoint non leggibile dal polling")
             else:
-                expected_int = clamp(int(round(float(next_setpoint))), 0, 99)
-                if abs(int(poll_setpoint) - expected_int) > 1:
+                set_i, set_d = split_temperature(float(next_setpoint))
+                expected_values: set[int] = {clamp(set_i, 0, 99)}
+                if set_d > 0:
+                    expected_values.add(clamp(set_i + 1, 0, 99))
+                if int(poll_setpoint) not in expected_values:
                     state_verified = False
+                    expected_label = "/".join(str(v) for v in sorted(expected_values))
                     verify_reasons.append(
-                        f"setpoint atteso {expected_int}, letto {int(poll_setpoint)}"
+                        f"setpoint atteso {expected_label}, letto {int(poll_setpoint)}"
                     )
         if requested_power is False:
             if not has_poll_setpoint:
@@ -2010,6 +2093,9 @@ def execute_thermostat_targets(
             frame_out = {"type": frame_item["type"]}
             if frame_item.get("frameHex"):
                 frame_out["frameHex"] = frame_item["frameHex"]
+            variants = frame_item.get("payloadVariants")
+            if isinstance(variants, list) and variants:
+                frame_out["variantCount"] = len(variants)
             add_payload_debug(frame_out, frame_item["payload"])
             item["frames"].append(frame_out)
         if verification.get("frameHex"):
@@ -2621,6 +2707,8 @@ def api_meta():
             "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
             "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
             "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+            "thermostatCommandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
+            "thermostatMultiEncoding": THERMOSTAT_MULTI_ENCODING,
             "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
@@ -2923,6 +3011,8 @@ def api_light_command(instance_id: str):
                 "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
                 "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+                "thermostatCommandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
+                "thermostatMultiEncoding": THERMOSTAT_MULTI_ENCODING,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3001,11 +3091,10 @@ def api_dimmer_command(instance_id: str):
                 "retries": MQTT_COMMAND_RETRIES,
                 "retryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
                 "publishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
-                "responseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
-                "responseRetries": THERMOSTAT_RESPONSE_RETRIES,
-                "responseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
-                "responseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
-                "commandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+                "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
+                "responseRetries": MQTT_RESPONSE_RETRIES,
+                "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3154,10 +3243,13 @@ def api_thermostat_command(instance_id: str):
                 "retries": MQTT_COMMAND_RETRIES,
                 "retryDelayMs": MQTT_COMMAND_RETRY_DELAY_MS,
                 "publishTimeoutSec": MQTT_PUBLISH_TIMEOUT_SEC,
-                "responseTimeoutMs": MQTT_RESPONSE_TIMEOUT_MS,
-                "responseRetries": MQTT_RESPONSE_RETRIES,
-                "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
-                "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "responseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
+                "responseRetries": THERMOSTAT_RESPONSE_RETRIES,
+                "responseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
+                "responseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "commandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+                "commandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
+                "multiEncoding": THERMOSTAT_MULTI_ENCODING,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
