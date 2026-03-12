@@ -2,14 +2,30 @@
 <html lang="it">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#191919">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta id="appNameMeta" name="application-name" content="Sheltr Cloud">
+  <meta id="appleAppTitleMeta" name="apple-mobile-web-app-title" content="Sheltr Cloud">
   <title>// Sheltr Cloud</title>
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link id="pwaManifest" rel="manifest" href="/manifest.webmanifest">
+  <script>
+    (function(){
+      function clean(v){return String(v||"").trim();}
+      function slug(v){return clean(v).toLowerCase().replace(/_/g,"-").replace(/[^a-z0-9-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"")}
+      const parts=location.pathname.split("/").filter(Boolean);
+      const fromPath=((parts[0]==="control"||parts[0]==="instance")&&parts[1])?decodeURIComponent(parts[1]):"";
+      const id=slug(fromPath);
+      const href=id?`/manifest/${encodeURIComponent(id)}.webmanifest`:"/manifest.webmanifest";
+      const link=document.createElement("link");
+      link.id="pwaManifest";
+      link.rel="manifest";
+      link.href=href;
+      document.head.appendChild(link);
+    })();
+  </script>
   <style>
     :root{--bg:#191919;--section:#282828;--fg:#f0efed;--muted:#bcbab6;--bd:#bcbab6;--s1:4px;--s2:8px;--s3:12px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,Monaco,Liberation Mono,monospace}
     *{box-sizing:border-box}
@@ -73,6 +89,9 @@
     .foot{margin-top:auto;padding:var(--s3) 0 2px;text-align:center;font-style:italic;font:12px/1.3 var(--mono);color:var(--muted)}
     .foot a{color:inherit}
     .hidden{display:none !important}
+    @supports (-webkit-touch-callout: none) {
+      input,select,textarea{font-size:16px !important}
+    }
     @media (max-width:576px){.card.temp{width:100%;max-width:550px}.card{width:calc(50% - 4px);}}
   </style>
 </head>
@@ -122,6 +141,7 @@
 const $=s=>document.querySelector(s);
 const titleEl=$("#pageTitle"),nowEl=$("#now"),roomsEl=$("#rooms"),msgEl=$("#msg"),lastEl=$("#last");
 const pwaManifestEl=$("#pwaManifest");
+const appNameMetaEl=$("#appNameMeta"),appleAppTitleMetaEl=$("#appleAppTitleMeta");
 const loginBox=$("#loginBox"),loginUser=$("#loginUser"),loginPass=$("#loginPass"),loginBtn=$("#loginBtn");
 const topEl=$("#top"),refreshBtn=$("#refresh"),allOnBtn=$("#allOn"),allOffBtn=$("#allOff"),logoutBtn=$("#logoutBtn");
 const tpModal=$("#tpModal"),tpTitle=$("#tpTitle"),tpEnabled=$("#tpEnabled"),tpRows=$("#tpRows"),tpAdd=$("#tpAdd"),tpSave=$("#tpSave"),tpClose=$("#tpClose");
@@ -163,11 +183,24 @@ function normSwitchProfile(kind,p){const entries=(Array.isArray(p?.entries)?p.en
 function forcedInstanceFromUrl(){const parts=location.pathname.split("/").filter(Boolean);if(parts[0]==="control"&&parts[1])return decodeURIComponent(parts[1]);if(parts[0]==="instance"&&parts[1])return decodeURIComponent(parts[1]);const q=new URLSearchParams(location.search).get("instance");return q||""}
 function tokenKey(instanceId){return `sheltr-token-${instanceId}`}
 function controlUrl(instanceId){return `/control/${encodeURIComponent(instanceId)}`}
-function pwaManifestUrl(instanceId){return `/manifest/${encodeURIComponent(instanceId)}.webmanifest`}
+function pwaAppName(instanceId,instanceName){
+  const fallback=slugify(instanceId,"dr154-1");
+  const raw=cleanText(instanceName,fallback);
+  const primary=cleanText(raw.split("//",1)[0],raw);
+  return primary;
+}
+function pwaManifestUrl(instanceId,appName){
+  const base=`/manifest/${encodeURIComponent(instanceId)}.webmanifest`;
+  const q=appName?`?name=${encodeURIComponent(appName)}`:"";
+  return base+q;
+}
 function applyPwaIdentity(instanceId,instanceName){
   const slug=slugify(instanceId,"dr154-1");
   const name=cleanText(instanceName,slug);
-  if(pwaManifestEl)pwaManifestEl.setAttribute("href",pwaManifestUrl(slug));
+  const appName=pwaAppName(slug,name);
+  if(pwaManifestEl)pwaManifestEl.setAttribute("href",pwaManifestUrl(slug,appName));
+  if(appNameMetaEl)appNameMetaEl.setAttribute("content",appName);
+  if(appleAppTitleMetaEl)appleAppTitleMetaEl.setAttribute("content",appName);
   const title=`${name} // Sheltr Cloud`;
   titleEl.textContent=title;
   document.title=title;
@@ -295,9 +328,15 @@ async function cmd(path,payload,okMessage){
     const out=await api(path,{method:"POST",body:JSON.stringify(payload)});
     const sent=Array.isArray(out?.sent)?out.sent:[];
     const verified=sent.filter(x=>x&&x.verified).length;
+    const unverified=sent.filter(x=>x&&!x.verified);
+    const reasons=unverified.map(x=>cleanText(x?.verifyReason,"")).filter(Boolean);
     applySentState(sent);
     renderStatus(state.status||{},true);
-    note(`${okMessage} (${sent.length} inviati${sent.length?`, confermati ${verified}/${sent.length}`:""}).`);
+    let message=`${okMessage} (${sent.length} inviati${sent.length?`, confermati ${verified}/${sent.length}`:""}).`;
+    if(reasons.length){
+      message+=`\n`+reasons.join(" | ");
+    }
+    note(message,unverified.length>0);
     await loadStatus(false,true);
     renderStatus(state.status||{},true);
   }catch(err){

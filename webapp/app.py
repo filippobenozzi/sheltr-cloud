@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, send_from_directory
 from paho.mqtt import client as mqtt
@@ -80,7 +81,9 @@ DIMMER_MIN_LEVEL = 0
 DIMMER_MAX_LEVEL = 9
 THERMOSTAT_MODE_COMMAND = 0x6B
 THERMOSTAT_SETPOINT_COMMAND = 0x5A
-THERMOSTAT_MODE_CODES = {"winter": 0, "summer": 1}
+# Protocollo 1.6 (OCR): G1=1 estate, G1=0 o 255 inverno.
+# Usiamo 0xFF per "winter" per massima compatibilita' firmware.
+THERMOSTAT_MODE_CODES = {"winter": 0xFF, "summer": 0x01}
 THERMOSTAT_MODE_NAMES = {code: name for name, code in THERMOSTAT_MODE_CODES.items()}
 FRAME_START = 0x49
 FRAME_END = 0x46
@@ -163,6 +166,13 @@ def slugify(value: Any, fallback: str) -> str:
     raw = re.sub(r"[^a-z0-9-]+", "-", raw)
     raw = re.sub(r"-+", "-", raw).strip("-")
     return raw or fallback
+
+
+def control_instance_from_path(path: str) -> str:
+    parts = [segment for segment in clean_text(path, "").split("/") if segment]
+    if len(parts) >= 2 and parts[0] in {"control", "instance"}:
+        return slugify(parts[1], "")
+    return ""
 
 
 def default_channel_name(kind: str, channel: int) -> str:
@@ -1806,6 +1816,10 @@ def execute_thermostat_targets(
     light_state, _, instance_state = _load_instance_state(instance_id)
     thermostats_state = get_state_map(instance_state, "thermostats")
     sent: list[dict[str, Any]] = []
+    mode_not_verifiable_reason = (
+        "Protocollo 1.6: comando 0x6B (estate/inverno) indicato come 'non attivo' "
+        "e non verificabile tramite polling 0x40."
+    )
 
     for entity in targets:
         previous = thermostats_state.get(entity["id"]) if isinstance(thermostats_state.get(entity["id"]), dict) else {}
@@ -1909,8 +1923,8 @@ def execute_thermostat_targets(
             retries=THERMOSTAT_RESPONSE_RETRIES,
             retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
         )
-        verified = bool(verification.get("ok"))
-        if must_verify and not verified:
+        transport_verified = bool(verification.get("ok"))
+        if must_verify and not transport_verified:
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
         update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
@@ -1921,11 +1935,48 @@ def execute_thermostat_targets(
             raw_poll_setpoint = to_int(poll_data.get("setpoint"), -1)
             if raw_poll_setpoint >= 0:
                 poll_setpoint = clamp(raw_poll_setpoint, 0, 99)
-        final_setpoint = float(poll_setpoint) if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else float(next_setpoint)
-        final_is_on = final_setpoint > 0 if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else bool(next_power)
+        has_poll_setpoint = isinstance(poll_setpoint, int) and poll_setpoint >= 0
+        final_setpoint = float(poll_setpoint) if has_poll_setpoint else float(next_setpoint)
+        final_is_on = final_setpoint > 0 if has_poll_setpoint else bool(next_power)
         output_mask = clamp(to_int(verification.get("outputMask"), 0), 0, 255)
         bit = 1 << (clamp(to_int(entity.get("channel"), 1), 1, 8) - 1)
-        final_is_active = bool(output_mask & bit) if verified else bool(previous.get("isActive")) if isinstance(previous.get("isActive"), bool) else final_is_on
+        final_is_active = bool(output_mask & bit) if transport_verified else bool(previous.get("isActive")) if isinstance(previous.get("isActive"), bool) else final_is_on
+
+        state_verified = True
+        verify_reasons: list[str] = []
+        if requested_setpoint is not None:
+            if not has_poll_setpoint:
+                state_verified = False
+                verify_reasons.append("setpoint non leggibile dal polling")
+            else:
+                expected_int = clamp(int(round(float(next_setpoint))), 0, 99)
+                if abs(int(poll_setpoint) - expected_int) > 1:
+                    state_verified = False
+                    verify_reasons.append(
+                        f"setpoint atteso {expected_int}, letto {int(poll_setpoint)}"
+                    )
+        if requested_power is False:
+            if not has_poll_setpoint:
+                state_verified = False
+                verify_reasons.append("power off non verificabile: setpoint assente nel polling")
+            elif int(poll_setpoint) != 0:
+                state_verified = False
+                verify_reasons.append(f"power off non applicato: setpoint letto {int(poll_setpoint)}")
+        if requested_power is True and requested_setpoint is None:
+            if not has_poll_setpoint:
+                state_verified = False
+                verify_reasons.append("power on non verificabile: setpoint assente nel polling")
+            elif int(poll_setpoint) <= 0:
+                state_verified = False
+                verify_reasons.append("power on non applicato")
+
+        mode_verified = requested_mode is None
+        if requested_mode is not None:
+            verify_reasons.append(mode_not_verifiable_reason)
+            # Evita stato UI non reale: la modalita' non e' derivabile da polling 0x40.
+            next_mode = normalize_thermostat_mode(previous.get("mode"))
+
+        verified = transport_verified and state_verified and mode_verified
 
         temperature = None
         if isinstance(poll_data, dict):
@@ -1952,6 +2003,9 @@ def execute_thermostat_targets(
             "publishRetries": MQTT_COMMAND_RETRIES,
             "frames": [],
         }
+        if requested_mode is not None:
+            item["requestedMode"] = requested_mode
+            item["modeVerified"] = False
         for frame_item in frames_to_send:
             frame_out = {"type": frame_item["type"]}
             if frame_item.get("frameHex"):
@@ -1962,8 +2016,14 @@ def execute_thermostat_targets(
             item["verifyFrameHex"] = verification.get("frameHex")
         if verification.get("outputMask") is not None:
             item["verifyOutputMask"] = verification.get("outputMask")
+        verify_reason_text = ""
         if verification.get("error"):
-            item["verifyReason"] = verification.get("error")
+            verify_reason_text = clean_text(verification.get("error"), "")
+        if verify_reasons:
+            extra = "; ".join(verify_reasons)
+            verify_reason_text = f"{verify_reason_text}; {extra}".strip("; ").strip()
+        if verify_reason_text:
+            item["verifyReason"] = verify_reason_text
         if temperature is not None:
             item["temperature"] = temperature
         sent.append(item)
@@ -2306,9 +2366,33 @@ def err(message: str, status: int = 400):
     return jsonify({"error": message}), status
 
 
+def resolve_manifest_default_instance() -> tuple[str, str]:
+    hinted = slugify(request.args.get("instance"), "")
+    if not hinted:
+        referer = clean_text(request.headers.get("Referer"), "")
+        if referer:
+            hinted = control_instance_from_path(urlparse(referer).path)
+    if not hinted:
+        return "dr154-1", "Sheltr Cloud"
+    with STORE_LOCK:
+        store = load_store()
+        instance = find_instance(store, hinted)
+    if isinstance(instance, dict):
+        instance_id = clean_text(instance.get("id"), hinted)
+        instance_name = clean_text(instance.get("name"), instance_id)
+        return instance_id, instance_name
+    return hinted, hinted
+
+
+def pwa_instance_label(instance_name: str, fallback: str) -> str:
+    raw = clean_text(instance_name, fallback)
+    primary = re.split(r"\s*//\s*", raw, maxsplit=1)[0].strip()
+    return primary or raw
+
+
 def control_manifest_payload(instance_id: str, instance_name: str) -> dict[str, Any]:
     clean_id = slugify(instance_id, "dr154-1")
-    clean_name = clean_text(instance_name, clean_id)
+    clean_name = pwa_instance_label(instance_name, clean_id)
     short_name = clean_name[:24] if len(clean_name) > 24 else clean_name
     control_url = f"/control/{clean_id}"
     return {
@@ -2353,7 +2437,8 @@ def service_worker():
 
 @app.get("/manifest.webmanifest")
 def manifest_default():
-    payload = control_manifest_payload("dr154-1", "Sheltr Cloud")
+    instance_id, instance_name = resolve_manifest_default_instance()
+    payload = control_manifest_payload(instance_id, instance_name)
     response = app.response_class(
         response=json.dumps(payload, ensure_ascii=False),
         status=200,
