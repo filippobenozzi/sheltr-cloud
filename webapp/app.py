@@ -40,13 +40,6 @@ THERMOSTAT_RESPONSE_RETRIES = max(0, min(5, int(os.environ.get("THERMOSTAT_RESPO
 THERMOSTAT_RESPONSE_RETRY_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_RETRY_DELAY_MS", "400")))
 THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS = max(0, int(os.environ.get("THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS", "700")))
 THERMOSTAT_COMMAND_FRAME_GAP_MS = max(0, int(os.environ.get("THERMOSTAT_COMMAND_FRAME_GAP_MS", "220")))
-THERMOSTAT_COMMAND_VARIANT_GAP_MS = max(0, int(os.environ.get("THERMOSTAT_COMMAND_VARIANT_GAP_MS", "80")))
-THERMOSTAT_MULTI_ENCODING = os.environ.get("THERMOSTAT_MULTI_ENCODING", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip().lower() in {
     "1",
     "true",
@@ -88,9 +81,7 @@ DIMMER_MIN_LEVEL = 0
 DIMMER_MAX_LEVEL = 9
 THERMOSTAT_MODE_COMMAND = 0x6B
 THERMOSTAT_SETPOINT_COMMAND = 0x5A
-# Protocollo 1.6 (OCR): G1=1 estate, G1=0 o 255 inverno.
-# Usiamo 0xFF per "winter" per massima compatibilita' firmware.
-THERMOSTAT_MODE_CODES = {"winter": 0xFF, "summer": 0x01}
+THERMOSTAT_MODE_CODES = {"winter": 0x00, "summer": 0x01}
 THERMOSTAT_MODE_NAMES = {code: name for name, code in THERMOSTAT_MODE_CODES.items()}
 FRAME_START = 0x49
 FRAME_END = 0x46
@@ -1483,35 +1474,6 @@ def payload_from_frame(
     return frame_payload_for_format(frame, payload_format), frame_hex
 
 
-def thermostat_payload_variants(
-    *,
-    frame: bytes,
-    primary_payload: Any,
-    payload_format: str,
-) -> list[Any]:
-    variants: list[Any] = [primary_payload]
-    if not THERMOSTAT_MULTI_ENCODING or not payload_format.startswith("frame_"):
-        return variants
-
-    variants.extend(
-        [
-            frame_payload_for_format(frame, "frame_hex_compact_crlf"),
-            frame_to_hex(frame, compact=True) + "\r",
-            frame,
-        ]
-    )
-
-    unique: list[Any] = []
-    seen: set[bytes] = set()
-    for payload in variants:
-        raw = mqtt_payload_bytes(payload)
-        if raw in seen:
-            continue
-        seen.add(raw)
-        unique.append(payload)
-    return unique
-
-
 def add_payload_debug(item: dict[str, Any], payload: Any) -> None:
     if isinstance(payload, (bytes, bytearray)):
         item["payloadBytesHex"] = bytes(payload).hex().upper()
@@ -1852,10 +1814,6 @@ def execute_thermostat_targets(
     light_state, _, instance_state = _load_instance_state(instance_id)
     thermostats_state = get_state_map(instance_state, "thermostats")
     sent: list[dict[str, Any]] = []
-    mode_not_verifiable_reason = (
-        "Protocollo 1.6: comando 0x6B (estate/inverno) indicato come 'non attivo' "
-        "e non verificabile tramite polling 0x40."
-    )
 
     for entity in targets:
         previous = thermostats_state.get(entity["id"]) if isinstance(thermostats_state.get(entity["id"]), dict) else {}
@@ -1882,19 +1840,7 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            mode_variants = thermostat_payload_variants(
-                frame=mode_frame,
-                primary_payload=mode_payload,
-                payload_format=effective_payload_format,
-            )
-            frames_to_send.append(
-                {
-                    "type": "mode",
-                    "payload": mode_payload,
-                    "payloadVariants": mode_variants,
-                    "frameHex": mode_hex,
-                }
-            )
+            frames_to_send.append({"type": "mode", "payload": mode_payload, "frameHex": mode_hex})
             next_mode = requested_mode
 
         if requested_setpoint is not None:
@@ -1919,19 +1865,7 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            off_variants = thermostat_payload_variants(
-                frame=power_off_frame,
-                primary_payload=off_payload,
-                payload_format=effective_payload_format,
-            )
-            frames_to_send.append(
-                {
-                    "type": "power_off",
-                    "payload": off_payload,
-                    "payloadVariants": off_variants,
-                    "frameHex": off_hex,
-                }
-            )
+            frames_to_send.append({"type": "power_off", "payload": off_payload, "frameHex": off_hex})
             next_power = False
         elif requested_setpoint is not None or requested_power is True:
             set_i, set_d = split_temperature(next_setpoint)
@@ -1954,40 +1888,21 @@ def execute_thermostat_targets(
                     "sentAt": now_iso(),
                 },
             )
-            on_variants = thermostat_payload_variants(
-                frame=power_on_frame,
-                primary_payload=on_payload,
-                payload_format=effective_payload_format,
-            )
-            frames_to_send.append(
-                {
-                    "type": "setpoint",
-                    "payload": on_payload,
-                    "payloadVariants": on_variants,
-                    "frameHex": on_hex,
-                }
-            )
+            frames_to_send.append({"type": "setpoint", "payload": on_payload, "frameHex": on_hex})
             next_power = True
 
         if not frames_to_send:
             raise ValueError("Nessun comando termostato generato")
 
         for frame_idx, frame_item in enumerate(frames_to_send):
-            payload_variants = frame_item.get("payloadVariants")
-            if not isinstance(payload_variants, list) or not payload_variants:
-                payload_variants = [frame_item["payload"]]
-
-            for variant_idx, variant_payload in enumerate(payload_variants):
-                mqtt_publish(
-                    effective_topic,
-                    variant_payload,
-                    qos=MQTT_COMMAND_QOS,
-                    retain=False,
-                    retries=MQTT_COMMAND_RETRIES,
-                    retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
-                )
-                if variant_idx < (len(payload_variants) - 1) and THERMOSTAT_COMMAND_VARIANT_GAP_MS > 0:
-                    time.sleep(THERMOSTAT_COMMAND_VARIANT_GAP_MS / 1000.0)
+            mqtt_publish(
+                effective_topic,
+                frame_item["payload"],
+                qos=MQTT_COMMAND_QOS,
+                retain=False,
+                retries=MQTT_COMMAND_RETRIES,
+                retry_delay_ms=MQTT_COMMAND_RETRY_DELAY_MS,
+            )
             if frame_idx < (len(frames_to_send) - 1) and THERMOSTAT_COMMAND_FRAME_GAP_MS > 0:
                 time.sleep(THERMOSTAT_COMMAND_FRAME_GAP_MS / 1000.0)
 
@@ -2002,8 +1917,8 @@ def execute_thermostat_targets(
             retries=THERMOSTAT_RESPONSE_RETRIES,
             retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
         )
-        transport_verified = bool(verification.get("ok"))
-        if must_verify and not transport_verified:
+        verified = bool(verification.get("ok"))
+        if must_verify and not verified:
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
         update_board_poll_state(instance_state, clamp(to_int(entity.get("address"), 0), 0, 254), verification)
@@ -2014,52 +1929,11 @@ def execute_thermostat_targets(
             raw_poll_setpoint = to_int(poll_data.get("setpoint"), -1)
             if raw_poll_setpoint >= 0:
                 poll_setpoint = clamp(raw_poll_setpoint, 0, 99)
-        has_poll_setpoint = isinstance(poll_setpoint, int) and poll_setpoint >= 0
-        final_setpoint = float(poll_setpoint) if has_poll_setpoint else float(next_setpoint)
-        final_is_on = final_setpoint > 0 if has_poll_setpoint else bool(next_power)
+        final_setpoint = float(poll_setpoint) if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else float(next_setpoint)
+        final_is_on = final_setpoint > 0 if isinstance(poll_setpoint, int) and poll_setpoint >= 0 else bool(next_power)
         output_mask = clamp(to_int(verification.get("outputMask"), 0), 0, 255)
         bit = 1 << (clamp(to_int(entity.get("channel"), 1), 1, 8) - 1)
-        final_is_active = bool(output_mask & bit) if transport_verified else bool(previous.get("isActive")) if isinstance(previous.get("isActive"), bool) else final_is_on
-
-        state_verified = True
-        verify_reasons: list[str] = []
-        if requested_setpoint is not None:
-            if not has_poll_setpoint:
-                state_verified = False
-                verify_reasons.append("setpoint non leggibile dal polling")
-            else:
-                set_i, set_d = split_temperature(float(next_setpoint))
-                expected_values: set[int] = {clamp(set_i, 0, 99)}
-                if set_d > 0:
-                    expected_values.add(clamp(set_i + 1, 0, 99))
-                if int(poll_setpoint) not in expected_values:
-                    state_verified = False
-                    expected_label = "/".join(str(v) for v in sorted(expected_values))
-                    verify_reasons.append(
-                        f"setpoint atteso {expected_label}, letto {int(poll_setpoint)}"
-                    )
-        if requested_power is False:
-            if not has_poll_setpoint:
-                state_verified = False
-                verify_reasons.append("power off non verificabile: setpoint assente nel polling")
-            elif int(poll_setpoint) != 0:
-                state_verified = False
-                verify_reasons.append(f"power off non applicato: setpoint letto {int(poll_setpoint)}")
-        if requested_power is True and requested_setpoint is None:
-            if not has_poll_setpoint:
-                state_verified = False
-                verify_reasons.append("power on non verificabile: setpoint assente nel polling")
-            elif int(poll_setpoint) <= 0:
-                state_verified = False
-                verify_reasons.append("power on non applicato")
-
-        mode_verified = requested_mode is None
-        if requested_mode is not None:
-            verify_reasons.append(mode_not_verifiable_reason)
-            # Evita stato UI non reale: la modalita' non e' derivabile da polling 0x40.
-            next_mode = normalize_thermostat_mode(previous.get("mode"))
-
-        verified = transport_verified and state_verified and mode_verified
+        final_is_active = bool(output_mask & bit) if verified else bool(previous.get("isActive")) if isinstance(previous.get("isActive"), bool) else final_is_on
 
         temperature = None
         if isinstance(poll_data, dict):
@@ -2086,30 +1960,18 @@ def execute_thermostat_targets(
             "publishRetries": MQTT_COMMAND_RETRIES,
             "frames": [],
         }
-        if requested_mode is not None:
-            item["requestedMode"] = requested_mode
-            item["modeVerified"] = False
         for frame_item in frames_to_send:
             frame_out = {"type": frame_item["type"]}
             if frame_item.get("frameHex"):
                 frame_out["frameHex"] = frame_item["frameHex"]
-            variants = frame_item.get("payloadVariants")
-            if isinstance(variants, list) and variants:
-                frame_out["variantCount"] = len(variants)
             add_payload_debug(frame_out, frame_item["payload"])
             item["frames"].append(frame_out)
         if verification.get("frameHex"):
             item["verifyFrameHex"] = verification.get("frameHex")
         if verification.get("outputMask") is not None:
             item["verifyOutputMask"] = verification.get("outputMask")
-        verify_reason_text = ""
         if verification.get("error"):
-            verify_reason_text = clean_text(verification.get("error"), "")
-        if verify_reasons:
-            extra = "; ".join(verify_reasons)
-            verify_reason_text = f"{verify_reason_text}; {extra}".strip("; ").strip()
-        if verify_reason_text:
-            item["verifyReason"] = verify_reason_text
+            item["verifyReason"] = verification.get("error")
         if temperature is not None:
             item["temperature"] = temperature
         sent.append(item)
@@ -2707,8 +2569,6 @@ def api_meta():
             "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
             "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
             "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
-            "thermostatCommandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
-            "thermostatMultiEncoding": THERMOSTAT_MULTI_ENCODING,
             "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
         }
@@ -3011,8 +2871,6 @@ def api_light_command(instance_id: str):
                 "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
                 "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
-                "thermostatCommandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
-                "thermostatMultiEncoding": THERMOSTAT_MULTI_ENCODING,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3248,8 +3106,6 @@ def api_thermostat_command(instance_id: str):
                 "responseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
                 "responseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "commandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
-                "commandVariantGapMs": THERMOSTAT_COMMAND_VARIANT_GAP_MS,
-                "multiEncoding": THERMOSTAT_MULTI_ENCODING,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
