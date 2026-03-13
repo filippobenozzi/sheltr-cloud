@@ -70,6 +70,7 @@
     .tset{display:flex;margin:auto;gap:6px;align-items:center}
     .tset input[type=range]{width:118px}
     .sval{min-width:48px;font-size:12px;font-weight:700}
+    .wait-note{margin-top:6px;min-height:14px}
     #msg{margin-top:var(--s2);font-size:12px;border:1px solid var(--bd);border-radius:6px;background:var(--section);color:var(--fg);padding:var(--s2);white-space:pre-wrap}
     #tpModal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:var(--s3);z-index:20}
     #tpModal.hidden{display:none}
@@ -245,15 +246,15 @@ function rebuildProfiles(){const map={thermostat:{},light:{},shutter:{}};for(con
 function profileOf(kind,id){const byKind=state.profiles[kind]||{};if(byKind[id])return byKind[id];return{enabled:false,entries:[]}}
 function setProfileInInstance(target,kind,id,profile){for(const b of (target?.boards||[])){if(b?.kind!==kind)continue;for(const c of (b?.channels||[])){if(chId(b.id,c?.channel)===id){c.profile=kind==="thermostat"?normThermoProfile(profile):normSwitchProfile(kind,profile);return true}}}return false}
 
-function lightCard(x){const on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'',pe=profileOf("light",x.id).enabled?' on':'';return '<div class="card"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openLProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+on+' onclick="cmdLight(\''+sq(x.id)+'\',\'on\')">ON</button><button'+off+' onclick="cmdLight(\''+sq(x.id)+'\',\'off\')">OFF</button></div></div>'}
-function dimmerCard(x){const bid=sid(x.id),rid='dm-'+bid,vid='dv-'+bid,l=Number(x.level),set=Number.isFinite(l)?Math.max(0,Math.min(9,Math.round(l))):0,on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'';return '<div class="card temp"><div class="tt">'+esc(x.name)+'</div><div class="a"><button'+on+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'on\')">ON</button><button'+off+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'off\')">OFF</button></div><div class="tset"><input id="'+rid+'" type="range" min="0" max="9" step="1" value="'+set+'" oninput="syncDimmer(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set+'</span><button class="pri" onclick="cmdDimmerSet(\''+sq(x.id)+'\',\''+rid+'\')">SET</button></div></div>'}
-function shutterCard(x){const a=String(x.action||"").toLowerCase(),up=a==="up"?' class="act"':'',down=a==="down"?' class="act"':'',pe=profileOf("shutter",x.id).enabled?' on':'';return '<div class="card sh"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openSProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+up+' onclick="cmdShutter(\''+sq(x.id)+'\',\'up\')">SU</button><button onclick="cmdShutter(\''+sq(x.id)+'\',\'stop\')">STOP</button><button'+down+' onclick="cmdShutter(\''+sq(x.id)+'\',\'down\')">GIU</button></div></div>'}
+function lightCard(x){const on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'',pe=profileOf("light",x.id).enabled?' on':'';return '<div class="card"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openLProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+on+' onclick="cmdLight(\''+sq(x.id)+'\',\'on\',this)">ON</button><button'+off+' onclick="cmdLight(\''+sq(x.id)+'\',\'off\',this)">OFF</button></div></div>'}
+function dimmerCard(x){const bid=sid(x.id),rid='dm-'+bid,vid='dv-'+bid,l=Number(x.level),set=Number.isFinite(l)?Math.max(0,Math.min(9,Math.round(l))):0,on=x.isOn===true?' class="pri lon"':'',off=x.isOn===false?' class="pri loff"':'';return '<div class="card temp"><div class="tt">'+esc(x.name)+'</div><div class="a"><button'+on+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'on\',this)">ON</button><button'+off+' onclick="cmdDimmerAction(\''+sq(x.id)+'\',\'off\',this)">OFF</button></div><div class="tset"><input id="'+rid+'" type="range" min="0" max="9" step="1" value="'+set+'" oninput="syncDimmer(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set+'</span><button class="pri" onclick="cmdDimmerSet(\''+sq(x.id)+'\',\''+rid+'\',this)">SET</button></div></div>'}
+function shutterCard(x){const a=String(x.action||"").toLowerCase(),up=a==="up"?' class="act"':'',down=a==="down"?' class="act"':'',pe=profileOf("shutter",x.id).enabled?' on':'';return '<div class="card sh"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openSProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="a"><button'+up+' onclick="cmdShutter(\''+sq(x.id)+'\',\'up\',this)">SU</button><button onclick="cmdShutter(\''+sq(x.id)+'\',\'stop\',this)">STOP</button><button'+down+' onclick="cmdShutter(\''+sq(x.id)+'\',\'down\',this)">GIU</button></div></div>'}
 function thermoCard(x){
   const bid=sid(x.id),rid='sp-'+bid,vid='sv-'+bid,t=(x.temperature==null||!Number.isFinite(Number(x.temperature)))?'--.- C':Number(x.temperature).toFixed(1)+' C';
   const a=(x.isActive===true)||(x.isActive==null&&x.isOn===true),p=a?'ACCESO':'SPENTO',d=a?'on':'off';
   const cur=Number(x.setpoint),set=Number.isFinite(cur)?Math.max(5,Math.min(30,cur)):21;
   const w=x.mode==='winter'?' class="pri"':'',sm=x.mode==='summer'?' class="pri"':'',pe=profileOf("thermostat",x.id).enabled?' on':'';
-  return '<div class="card temp"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openTProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="ts">Temp: '+t+'<span class="dot '+d+'"></span>'+p+'</div><div class="a mode"><button'+w+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'winter\')">INVERNO</button><button'+sm+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'summer\')">ESTATE</button></div><div class="tset"><input id="'+rid+'" type="range" min="5" max="30" step="0.5" value="'+set.toFixed(1)+'" oninput="syncSlider(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set.toFixed(1)+' C</span><button class="pri" onclick="cmdThermoSet(\''+sq(x.id)+'\',\''+rid+'\')">SET</button></div></div>'
+  return '<div class="card temp"><div class="hd"><div class="tt">'+esc(x.name)+'</div><button class="gear'+pe+'" title="Profilo orario" onclick="openTProfile(\''+sq(x.id)+'\')">⚙</button></div><div class="ts">Temp: '+t+'<span class="dot '+d+'"></span>'+p+'</div><div class="a mode"><button'+w+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'winter\',this)">INVERNO</button><button'+sm+' onclick="cmdThermoMode(\''+sq(x.id)+'\',\'summer\',this)">ESTATE</button></div><div class="tset"><input id="'+rid+'" type="range" min="5" max="30" step="0.5" value="'+set.toFixed(1)+'" oninput="syncSlider(\''+rid+'\',\''+vid+'\')"><span id="'+vid+'" class="sval">'+set.toFixed(1)+' C</span><button class="pri" onclick="cmdThermoSet(\''+sq(x.id)+'\',\''+rid+'\',this)">SET</button></div></div>'
 }
 function sortByName(list){return [...(list||[])].sort((a,b)=>String(a?.name||"").localeCompare(String(b?.name||""),"it",{sensitivity:"base"}))}
 function roomBlock(room){let cards="";for(const x of sortByName(room.thermostats))cards+=thermoCard(x);for(const x of sortByName(room.lights))cards+=lightCard(x);for(const x of sortByName(room.dimmers))cards+=dimmerCard(x);for(const x of sortByName(room.shutters))cards+=shutterCard(x);if(!cards)cards='<div class="small">Nessuna entita</div>';return '<section class="room"><h2>'+esc(room.name)+'</h2><div class="grid">'+cards+'</div></section>'}
@@ -329,7 +330,23 @@ function applySentState(sent){
   }
 }
 
-async function cmd(path,payload,okMessage){
+function waitElForButton(btn){
+  const card=btn?.closest?.(".card");
+  if(!card)return null;
+  let el=card.querySelector(".wait-note");
+  if(!el){
+    el=document.createElement("div");
+    el.className="small wait-note";
+    card.appendChild(el);
+  }
+  return el;
+}
+
+async function cmd(path,payload,okMessage,btn){
+  const b=btn instanceof HTMLElement?btn:null;
+  const waitEl=b?waitElForButton(b):null;
+  if(b)b.disabled=true;
+  if(waitEl)waitEl.textContent="In attesa di risposta...";
   try{
     const out=await api(path,{method:"POST",body:JSON.stringify(payload)});
     const sent=Array.isArray(out?.sent)?out.sent:[];
@@ -346,15 +363,18 @@ async function cmd(path,payload,okMessage){
     setTimeout(()=>{loadStatus(false,true).then(()=>renderStatus(state.status||{},true)).catch(()=>{})},150);
   }catch(err){
     if(!handleAuthError(err))note(err.message,true)
+  }finally{
+    if(waitEl)waitEl.textContent="";
+    if(b)b.disabled=false;
   }
 }
 
-window.cmdLight=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{lightId:id,action},`Comando luce '${action}'`);
-window.cmdDimmerAction=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action},`Comando dimmer '${action}'`);
-window.cmdDimmerSet=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action:"set",level:Number(v)},"Comando dimmer 'set'")};
-window.cmdShutter=(id,action)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/shutters/command`,{shutterId:id,action},`Comando tapparella '${action}'`);
-window.cmdThermoSet=(id,inputId)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,setpoint:Number(v)},"Comando termostato setpoint")};
-window.cmdThermoMode=(id,mode)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,mode},`Comando termostato mode '${mode}'`);
+window.cmdLight=(id,action,btn)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/lights/command`,{lightId:id,action},`Comando luce '${action}'`,btn);
+window.cmdDimmerAction=(id,action,btn)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action},`Comando dimmer '${action}'`,btn);
+window.cmdDimmerSet=(id,inputId,btn)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/dimmers/command`,{dimmerId:id,action:"set",level:Number(v)},"Comando dimmer 'set'",btn)};
+window.cmdShutter=(id,action,btn)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/shutters/command`,{shutterId:id,action},`Comando tapparella '${action}'`,btn);
+window.cmdThermoSet=(id,inputId,btn)=>{const v=document.getElementById(inputId)?.value;return cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,setpoint:Number(v)},"Comando termostato setpoint",btn)};
+window.cmdThermoMode=(id,mode,btn)=>cmd(`/api/instances/${encodeURIComponent(state.instanceId)}/thermostats/command`,{thermostatId:id,mode},`Comando termostato mode '${mode}'`,btn);
 window.syncSlider=(rid,vid)=>{const r=document.getElementById(rid),v=document.getElementById(vid);if(r&&v){const n=Number(r.value);v.textContent=(Number.isFinite(n)?n.toFixed(1):"--.-")+" C"}};
 window.syncDimmer=(rid,vid)=>{const r=document.getElementById(rid),v=document.getElementById(vid);if(r&&v){const n=Number(r.value);v.textContent=Number.isFinite(n)?String(Math.round(n)):"0"}};
 
