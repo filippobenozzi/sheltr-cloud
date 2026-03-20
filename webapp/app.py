@@ -93,6 +93,41 @@ KIND_META = {
     "dimmer": {"label": "Dimmer", "maxChannels": 1, "channelPrefix": "Dimmer"},
     "thermostat": {"label": "Termostati", "maxChannels": 1, "channelPrefix": "Termostato"},
 }
+DEFAULT_DEVICE_TYPE = "sheltr_4g"
+DEVICE_TYPE_META = {
+    "sheltr_mini": {
+        "label": "Sheltr Mini",
+        "description": "Profilo Sheltr Cloud con payload MQTT JSON.",
+        "module": "SHELTR_MINI",
+        "transport": "mqtt_json",
+        "defaultPayloadFormat": "json",
+        "supportsFramePolling": False,
+        "defaultBoard": {
+            "id": "board-1",
+            "name": "Sheltr Mini",
+            "kind": "light",
+            "address": 1,
+            "channelStart": 1,
+            "channelEnd": 8,
+        },
+    },
+    "sheltr_4g": {
+        "label": "Sheltr 4G / DR154",
+        "description": "Modulo DR154 con la configurazione attuale a frame protocollo 1.6.",
+        "module": "DR154",
+        "transport": "dr154_protocol_v1_6",
+        "defaultPayloadFormat": "frame_hex_space_crlf",
+        "supportsFramePolling": True,
+        "defaultBoard": {
+            "id": "board-1",
+            "name": "Scheda Luci",
+            "kind": "light",
+            "address": 1,
+            "channelStart": 1,
+            "channelEnd": 8,
+        },
+    },
+}
 
 STORE_LOCK = threading.Lock()
 LIGHT_STATE_LOCK = threading.Lock()
@@ -176,6 +211,75 @@ def control_instance_from_path(path: str) -> str:
 def default_channel_name(kind: str, channel: int) -> str:
     prefix = KIND_META.get(kind, KIND_META["light"])["channelPrefix"]
     return f"{prefix} {channel}"
+
+
+def normalize_device_type(value: Any, fallback: str = DEFAULT_DEVICE_TYPE) -> str:
+    fallback_type = fallback if fallback in DEVICE_TYPE_META else DEFAULT_DEVICE_TYPE
+    raw = clean_text(value, fallback_type).lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "mini": "sheltr_mini",
+        "sheltrmini": "sheltr_mini",
+        "sheltr_mini": "sheltr_mini",
+        "4g": "sheltr_4g",
+        "dr154": "sheltr_4g",
+        "sheltr4g": "sheltr_4g",
+        "sheltr_4g": "sheltr_4g",
+    }
+    normalized = aliases.get(raw, raw)
+    return normalized if normalized in DEVICE_TYPE_META else fallback_type
+
+
+def device_type_definition(device_type: Any) -> dict[str, Any]:
+    return DEVICE_TYPE_META[normalize_device_type(device_type)]
+
+
+def device_type_public(device_type: Any) -> dict[str, Any]:
+    normalized = normalize_device_type(device_type)
+    meta = device_type_definition(normalized)
+    return {
+        "type": normalized,
+        "label": clean_text(meta.get("label"), normalized),
+        "description": clean_text(meta.get("description"), ""),
+        "module": clean_text(meta.get("module"), ""),
+        "transport": clean_text(meta.get("transport"), ""),
+        "defaultPayloadFormat": clean_text(meta.get("defaultPayloadFormat"), "frame_hex_space_crlf"),
+        "supportsFramePolling": bool(meta.get("supportsFramePolling")),
+    }
+
+
+def device_types_public_meta() -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in sorted(DEVICE_TYPE_META):
+        item = device_type_public(key)
+        meta = device_type_definition(key)
+        default_board = meta.get("defaultBoard") if isinstance(meta.get("defaultBoard"), dict) else {}
+        item["defaultBoard"] = {
+            "id": clean_text(default_board.get("id"), "board-1"),
+            "name": clean_text(default_board.get("name"), "Scheda"),
+            "kind": clean_text(default_board.get("kind"), "light"),
+            "address": clamp(to_int(default_board.get("address"), 1), 0, 254),
+            "channelStart": clamp(to_int(default_board.get("channelStart"), 1), 1, 8),
+            "channelEnd": clamp(to_int(default_board.get("channelEnd"), 8), 1, 8),
+        }
+        out[key] = item
+    return out
+
+
+def build_device_default_mqtt(device_type: Any, instance_id: str) -> dict[str, Any]:
+    normalized = normalize_device_type(device_type)
+    meta = device_type_definition(normalized)
+    response_topic = "" if normalized == "sheltr_mini" else f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light"
+    return {
+        "lightCommandTopic": f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light",
+        "lightResponseTopic": response_topic,
+        "lightPayloadFormat": clean_text(meta.get("defaultPayloadFormat"), "frame_hex_space_crlf"),
+    }
+
+
+def build_device_default_boards(device_type: Any) -> list[dict[str, Any]]:
+    meta = device_type_definition(device_type)
+    default_board = meta.get("defaultBoard") if isinstance(meta.get("defaultBoard"), dict) else {}
+    return [normalize_board(default_board, 0)]
 
 
 def split_temperature(value: float) -> tuple[int, int]:
@@ -383,25 +487,29 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     current_id = clean_text(current.get("id"), "dr154-1")
     instance_id = slugify(payload.get("id"), slugify(fallback_id, slugify(current_id, "dr154-1")))
     instance_name = clean_text(payload.get("name"), clean_text(current.get("name"), instance_id))
+    device_type = normalize_device_type(payload.get("deviceType"), normalize_device_type(current.get("deviceType"), DEFAULT_DEVICE_TYPE))
+    apply_device_defaults = bool(payload.get("applyDeviceDefaults"))
     boards_raw = payload.get("boards")
     boards_input = boards_raw if isinstance(boards_raw, list) else []
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     mqtt_current = current.get("mqtt") if isinstance(current.get("mqtt"), dict) else {}
+    mqtt_defaults = build_device_default_mqtt(device_type, instance_id)
+    mqtt_fallback = mqtt_defaults if apply_device_defaults else mqtt_current
     light_command_topic = clean_text(
         mqtt_in.get("lightCommandTopic"),
-        clean_text(mqtt_current.get("lightCommandTopic"), f"{MQTT_BASE_TOPIC}/{instance_id}/cmd/light"),
+        clean_text(mqtt_fallback.get("lightCommandTopic"), mqtt_defaults["lightCommandTopic"]),
     )
     response_raw = mqtt_in.get("lightResponseTopic")
     if isinstance(response_raw, str):
         light_response_topic = response_raw.strip()
     else:
         light_response_topic = clean_text(
-            mqtt_current.get("lightResponseTopic"),
-            f"{MQTT_BASE_TOPIC}/{instance_id}/pub/light",
+            mqtt_fallback.get("lightResponseTopic"),
+            clean_text(mqtt_defaults.get("lightResponseTopic"), ""),
         )
     light_payload_format = clean_text(
         mqtt_in.get("lightPayloadFormat"),
-        clean_text(mqtt_current.get("lightPayloadFormat"), "frame_hex_space_crlf"),
+        clean_text(mqtt_fallback.get("lightPayloadFormat"), mqtt_defaults["lightPayloadFormat"]),
     ).lower()
     if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
         light_payload_format = "frame_hex_space_crlf"
@@ -423,11 +531,12 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
 
     boards = [normalize_board(item, idx) for idx, item in enumerate(boards_input[:64])]
     if not boards:
-        boards = [normalize_board({"id": "board-1", "name": "Scheda Luci", "kind": "light"}, 0)]
+        boards = build_device_default_boards(device_type)
 
     return {
         "id": instance_id,
         "name": instance_name,
+        "deviceType": device_type,
         "protocolVersion": "1.6",
         "boards": boards,
         "mqtt": {
@@ -523,10 +632,17 @@ def instance_control_url(instance_id: str) -> str:
     return f"/control/{slugify(instance_id, 'dr154-1')}"
 
 
+def instance_device_type(instance: dict[str, Any]) -> str:
+    return normalize_device_type(instance.get("deviceType"), DEFAULT_DEVICE_TYPE)
+
+
 def instance_public(instance: dict[str, Any]) -> dict[str, Any]:
+    device_type = instance_device_type(instance)
     return {
         "id": clean_text(instance.get("id"), "dr154-1"),
         "name": clean_text(instance.get("name"), "dr154-1"),
+        "deviceType": device_type,
+        "device": device_type_public(device_type),
         "protocolVersion": clean_text(instance.get("protocolVersion"), "1.6"),
         "boards": instance.get("boards", []),
         "mqtt": instance.get("mqtt", {}),
@@ -536,12 +652,52 @@ def instance_public(instance: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def instance_associated_devices(instance: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for board in instance.get("boards", []):
+        if not isinstance(board, dict):
+            continue
+        kind = clean_text(board.get("kind"), "light").lower()
+        if kind not in KIND_META:
+            kind = "light"
+        board_id = clean_text(board.get("id"), "board-1")
+        board_name = clean_text(board.get("name"), board_id)
+        address = clamp(to_int(board.get("address"), 0), 0, 254)
+        max_channels = KIND_META.get(kind, KIND_META["light"])["maxChannels"]
+        for channel_data in board.get("channels", []):
+            if not isinstance(channel_data, dict):
+                continue
+            channel = clamp(to_int(channel_data.get("channel"), 1), 1, max_channels)
+            item = {
+                "id": f"{board_id}-c{channel}",
+                "kind": kind,
+                "boardId": board_id,
+                "boardName": board_name,
+                "address": address,
+                "channel": channel,
+                "name": clean_text(channel_data.get("name"), default_channel_name(kind, channel)),
+                "room": clean_text(channel_data.get("room"), "Senza stanza"),
+            }
+            profile_kind = profile_kind_for_board(kind)
+            if profile_kind == "thermostat":
+                item["profile"] = normalize_thermostat_profile(channel_data.get("profile"))
+            elif profile_kind in {"light", "shutter"}:
+                item["profile"] = normalize_switch_profile(channel_data.get("profile"), profile_kind)
+            out.append(item)
+    out.sort(key=lambda item: (str(item.get("boardId", "")).lower(), int(item.get("channel", 0))))
+    return out
+
+
 def instance_publish_payload(instance: dict[str, Any]) -> dict[str, Any]:
+    device_type = instance_device_type(instance)
     return {
         "id": clean_text(instance.get("id"), "dr154-1"),
         "name": clean_text(instance.get("name"), "dr154-1"),
+        "deviceType": device_type,
+        "device": device_type_public(device_type),
         "protocolVersion": clean_text(instance.get("protocolVersion"), "1.6"),
         "boards": instance.get("boards", []),
+        "devices": instance_associated_devices(instance),
         "mqtt": instance.get("mqtt", {}),
         "updatedAt": instance.get("updatedAt"),
     }
@@ -1997,9 +2153,12 @@ def execute_thermostat_targets(
 
 def list_view(instance: dict[str, Any]) -> dict[str, Any]:
     instance_id = clean_text(instance.get("id"), "dr154-1")
+    device_type = instance_device_type(instance)
     return {
         "id": instance_id,
         "name": clean_text(instance.get("name"), instance_id),
+        "deviceType": device_type,
+        "deviceLabel": device_type_public(device_type)["label"],
         "protocolVersion": clean_text(instance.get("protocolVersion"), "1.6"),
         "boardsCount": len(instance.get("boards", [])),
         "authRequired": instance_has_auth(instance),
@@ -2581,6 +2740,8 @@ def api_meta():
             "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
             "mqttRequireResponse": MQTT_REQUIRE_RESPONSE,
             "lightPayloadFormats": sorted(LIGHT_PAYLOAD_FORMATS),
+            "defaultDeviceType": DEFAULT_DEVICE_TYPE,
+            "deviceTypes": device_types_public_meta(),
         }
     )
 

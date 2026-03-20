@@ -3,13 +3,13 @@
 Stack Docker per:
 
 - broker MQTT pubblico con autenticazione (`username/password`)
-- interfaccia web per gestire più istanze DR154
+- interfaccia web per gestire più dispositivi Sheltr (`Sheltr Mini`, `Sheltr 4G / DR154`)
 - configurazione schede protocollo 1.6 (`light`, `shutter`, `dimmer`, `thermostat`)
 - assegnazione nomi canali e stanze
 - interfaccia comando dispositivi (`luci`, `tapparelle`, `dimmer`, `termostato`) via MQTT
 - controllo dispositivi raggruppato per stanze
 - profili orari da interfaccia controllo (`luci`, `tapparelle`, `termostato`)
-- pubblicazione configurazione su MQTT (retain)
+- pubblicazione configurazione su MQTT (retain) con `deviceType` e dispositivi associati
 
 ## Avvio rapido
 
@@ -39,22 +39,26 @@ MQTT_PASSWORD=filippo1994
 
 ## Uso della UI
 
-1. Crea una nuova istanza DR154 (es. `dr154-villa`).
+1. Crea una nuova istanza/dispositivo Sheltr (es. `dr154-villa`).
 2. Apri l'istanza dalla pagina config.
 3. Se impostato in `.env`, fai login config (`CONFIG_AUTH_USERNAME` / `CONFIG_AUTH_PASSWORD`).
-4. Aggiungi le schede (`light`, `shutter`, `dimmer`, `thermostat`).
-5. Imposta indirizzo, range canali, nome canale e stanza.
-6. Imposta login per istanza (`username` e `password`) nella pagina config.
-7. Salva.
-8. Premi `Pubblica su MQTT` per inviare la configurazione.
-9. Apri il controllo dedicato su `/control/<istanza>`.
-10. Se DR154 è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
-11. Imposta anche `Topic risposta DR154` uguale al `Publish topic` del DR154.
-12. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
-13. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
-14. In controllo trovi card stanza per `luci`, `tapparelle`, `dimmer`, `termostato`.
-15. Sulle card con `⚙` puoi impostare il profilo orario.
-16. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
+4. Seleziona il tipo dispositivo:
+   - `Sheltr 4G / DR154`: profilo storico con configurazione attuale e payload `frame_*`.
+   - `Sheltr Mini`: profilo Sheltr Cloud con payload `json`.
+5. Il portale applica automaticamente il preset iniziale di topic, payload e scheda associata.
+6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
+7. Imposta indirizzo, range canali, nome canale e stanza.
+8. Imposta login per istanza (`username` e `password`) nella pagina config.
+9. Salva.
+10. Premi `Pubblica su MQTT` per inviare la configurazione.
+11. Apri il controllo dedicato su `/control/<istanza>`.
+12. Se `Sheltr 4G / DR154` è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
+13. Per `Sheltr 4G / DR154` imposta anche `Topic risposta dispositivo` uguale al `Publish topic` del DR154.
+14. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
+15. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
+16. In controllo trovi card stanza per `luci`, `tapparelle`, `dimmer`, `termostato`.
+17. Sulle card con `⚙` puoi impostare il profilo orario.
+18. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
 
 Topic di default per la configurazione:
 
@@ -63,6 +67,11 @@ dr154/<istanza>/config
 ```
 
 Messaggio pubblicato in JSON, con `retain=true`.
+Il payload include anche:
+
+- `deviceType`: profilo selezionato (`sheltr_mini` oppure `sheltr_4g`)
+- `device`: metadati del profilo dispositivo
+- `devices`: elenco piatto dei dispositivi/canali associati pubblicati
 
 Topic default comandi luci:
 
@@ -70,7 +79,7 @@ Topic default comandi luci:
 dr154/<istanza>/cmd/light
 ```
 
-Topic default risposta DR154:
+Topic default risposta dispositivo (`Sheltr 4G / DR154`):
 
 ```text
 dr154/<istanza>/pub/light

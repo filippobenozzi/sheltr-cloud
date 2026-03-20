@@ -74,6 +74,12 @@
       <form id="createForm" class="row">
         <label>ID istanza<input id="newId" placeholder="es. casa-demo" required></label>
         <label>Nome istanza<input id="newName" placeholder="es. Casa Demo" required></label>
+        <label>Tipo dispositivo
+          <select id="newDeviceType">
+            <option value="sheltr_mini">Sheltr Mini</option>
+            <option value="sheltr_4g" selected>Sheltr 4G / DR154</option>
+          </select>
+        </label>
         <button type="submit">Crea istanza</button>
       </form>
       <div class="instances" id="instances"></div>
@@ -87,8 +93,14 @@
         <div class="row">
           <label>ID istanza<input id="instanceId" placeholder="es. casa-demo"></label>
           <label>Nome istanza<input id="instanceName"></label>
+          <label>Tipo dispositivo
+            <select id="deviceType">
+              <option value="sheltr_mini">Sheltr Mini</option>
+              <option value="sheltr_4g">Sheltr 4G / DR154</option>
+            </select>
+          </label>
           <label>Topic comandi luci<input id="lightTopicInput"></label>
-          <label>Topic risposta DR154<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
+          <label>Topic risposta dispositivo<input id="lightResponseTopicInput" placeholder="es. dr154/casa-demo/pub/light"></label>
           <label>Formato payload
             <select id="lightPayloadFormat">
               <option value="frame_hex_space">Frame HEX con spazi</option>
@@ -102,6 +114,7 @@
           <label>Versione protocollo<input id="protocolVersion" value="1.6" readonly></label>
           <label>Schede<input id="boardsCount" readonly></label>
         </div>
+        <p id="deviceTypeHint" class="small"></p>
 
         <div class="row" style="margin-top:8px;">
           <label>Username login controllo<input id="authUsername" placeholder="es. filippo"></label>
@@ -133,12 +146,33 @@
       dimmer: { label: "Dimmer", maxChannels: 1, prefix: "Dimmer" },
       thermostat: { label: "Termostati", maxChannels: 1, prefix: "Termostato" }
     };
+    const DEFAULT_DEVICE_TYPE = "sheltr_4g";
+    const DEVICE_TYPE_META = {
+      sheltr_mini: {
+        label: "Sheltr Mini",
+        description: "Profilo Sheltr Cloud con payload MQTT JSON e configurazione pubblicata dei dispositivi associati.",
+        module: "SHELTR_MINI",
+        transport: "mqtt_json",
+        defaultPayloadFormat: "json",
+        defaultBoard: { id: "board-1", name: "Sheltr Mini", kind: "light", address: 1, channelStart: 1, channelEnd: 8 }
+      },
+      sheltr_4g: {
+        label: "Sheltr 4G / DR154",
+        description: "Modulo DR154 con la configurazione attuale del portale.",
+        module: "DR154",
+        transport: "dr154_protocol_v1_6",
+        defaultPayloadFormat: "frame_hex_space_crlf",
+        defaultBoard: { id: "board-1", name: "Scheda Luci", kind: "light", address: 1, channelStart: 1, channelEnd: 8 }
+      }
+    };
 
     const state = {
       instances: [],
       current: null,
       currentId: null,
       mqttBaseTopic: "dr154",
+      defaultDeviceType: DEFAULT_DEVICE_TYPE,
+      deviceTypes: DEVICE_TYPE_META,
       configAuthRequired: false,
       configToken: ""
     };
@@ -153,6 +187,7 @@
       createForm: document.getElementById("createForm"),
       newId: document.getElementById("newId"),
       newName: document.getElementById("newName"),
+      newDeviceType: document.getElementById("newDeviceType"),
       instances: document.getElementById("instances"),
       selectedInstance: document.getElementById("selectedInstance"),
       emptyState: document.getElementById("emptyState"),
@@ -160,6 +195,8 @@
       instanceTitle: document.getElementById("instanceTitle"),
       instanceId: document.getElementById("instanceId"),
       instanceName: document.getElementById("instanceName"),
+      deviceType: document.getElementById("deviceType"),
+      deviceTypeHint: document.getElementById("deviceTypeHint"),
       lightTopicInput: document.getElementById("lightTopicInput"),
       lightResponseTopicInput: document.getElementById("lightResponseTopicInput"),
       lightPayloadFormat: document.getElementById("lightPayloadFormat"),
@@ -204,12 +241,87 @@
       return `${KIND_META[kind]?.prefix || "Canale"} ${channel}`;
     }
 
+    function normalizeDeviceType(value) {
+      const fallback = state.defaultDeviceType || DEFAULT_DEVICE_TYPE;
+      const raw = cleanText(value, fallback).toLowerCase().replace(/[\s-]+/g, "_");
+      const aliases = {
+        mini: "sheltr_mini",
+        sheltrmini: "sheltr_mini",
+        sheltr_mini: "sheltr_mini",
+        "4g": "sheltr_4g",
+        dr154: "sheltr_4g",
+        sheltr4g: "sheltr_4g",
+        sheltr_4g: "sheltr_4g"
+      };
+      const normalized = aliases[raw] || raw;
+      return state.deviceTypes[normalized] ? normalized : fallback;
+    }
+
+    function deviceTypeMeta(deviceType) {
+      return state.deviceTypes[normalizeDeviceType(deviceType)] || state.deviceTypes[state.defaultDeviceType] || DEVICE_TYPE_META[DEFAULT_DEVICE_TYPE];
+    }
+
+    function deviceTypeLabel(deviceType) {
+      return cleanText(deviceTypeMeta(deviceType).label, normalizeDeviceType(deviceType));
+    }
+
     function defaultLightTopic(instanceId) {
       return `${state.mqttBaseTopic}/${instanceId}/cmd/light`;
     }
 
     function defaultLightResponseTopic(instanceId) {
       return `${state.mqttBaseTopic}/${instanceId}/pub/light`;
+    }
+
+    function defaultLightResponseTopicForDevice(instanceId, deviceType) {
+      return normalizeDeviceType(deviceType) === "sheltr_mini" ? "" : defaultLightResponseTopic(instanceId);
+    }
+
+    function defaultDeviceBoard(deviceType, index = 0) {
+      const meta = deviceTypeMeta(deviceType);
+      const board = meta.defaultBoard && typeof meta.defaultBoard === "object" ? meta.defaultBoard : {};
+      return normalizeBoard({
+        id: cleanText(board.id, `board-${index + 1}`),
+        name: cleanText(board.name, deviceTypeLabel(deviceType)),
+        kind: cleanText(board.kind, "light"),
+        address: toInt(board.address, index + 1),
+        channelStart: toInt(board.channelStart, 1),
+        channelEnd: toInt(board.channelEnd, 8)
+      }, index);
+    }
+
+    function applyDevicePreset(target, deviceType, instanceId = "") {
+      if (!target || typeof target !== "object") return target;
+      const normalizedType = normalizeDeviceType(deviceType || target.deviceType);
+      const resolvedId = slugify(instanceId || target.id || "dr154-1", "dr154-1");
+      const meta = deviceTypeMeta(normalizedType);
+      target.deviceType = normalizedType;
+      target.mqtt = {
+        ...(target.mqtt && typeof target.mqtt === "object" ? target.mqtt : {}),
+        lightCommandTopic: defaultLightTopic(resolvedId),
+        lightResponseTopic: defaultLightResponseTopicForDevice(resolvedId, normalizedType),
+        lightPayloadFormat: cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")
+      };
+      target.boards = [defaultDeviceBoard(normalizedType, 0)];
+      return target;
+    }
+
+    function renderDeviceTypeHint() {
+      if (!state.current) {
+        el.deviceTypeHint.textContent = "";
+        return;
+      }
+      const type = normalizeDeviceType(el.deviceType.value);
+      const meta = deviceTypeMeta(type);
+      const bits = [
+        cleanText(meta.description, ""),
+        `Modulo: ${cleanText(meta.module, "-")}`,
+        `Payload default: ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")}`,
+        type === "sheltr_mini"
+          ? "Topic risposta frame non impostato di default."
+          : "Compatibile con la configurazione DR154 attuale."
+      ];
+      el.deviceTypeHint.textContent = bits.filter(Boolean).join(" • ");
     }
 
     function controlUrl(instanceId) {
@@ -361,7 +473,8 @@
         b.textContent = item.name;
         const m = document.createElement("div");
         m.className = "meta";
-        m.textContent = `${item.id} • ${item.boardsCount} schede${item.authRequired ? " • login" : ""}`;
+        const deviceLabel = cleanText(item.deviceLabel, deviceTypeLabel(item.deviceType));
+        m.textContent = `${item.id} • ${deviceLabel} • ${item.boardsCount} schede${item.authRequired ? " • login" : ""}`;
         left.appendChild(b);
         left.appendChild(m);
         const linkRow = document.createElement("div");
@@ -414,19 +527,22 @@
 
       el.emptyState.classList.add("hidden");
       el.editor.classList.remove("hidden");
+      state.current.deviceType = normalizeDeviceType(state.current.deviceType);
 
       el.instanceTitle.textContent = `Istanza: ${state.current.name}`;
       el.instanceId.value = cleanText(state.current.id, "");
       el.instanceName.value = cleanText(state.current.name, state.current.id);
+      el.deviceType.value = normalizeDeviceType(state.current.deviceType);
       el.protocolVersion.value = state.current.protocolVersion || "1.6";
       el.lightTopicInput.value = cleanText(state.current?.mqtt?.lightCommandTopic, defaultLightTopic(state.current.id));
-      el.lightResponseTopicInput.value = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopic(state.current.id));
+      el.lightResponseTopicInput.value = cleanText(state.current?.mqtt?.lightResponseTopic, defaultLightResponseTopicForDevice(state.current.id, state.current.deviceType));
       el.lightPayloadFormat.value = cleanText(state.current?.mqtt?.lightPayloadFormat, "frame_hex_space_crlf");
       el.authUsername.value = cleanText(state.current?.auth?.username, "");
       el.authPassword.value = "";
       el.authPasswordClear.checked = false;
       el.boardsCount.value = String((state.current.boards || []).length);
 
+      renderDeviceTypeHint();
       renderBoards();
     }
 
@@ -532,14 +648,16 @@
 
     function currentPayload() {
       if (!state.current) return null;
+      const currentId = slugify(el.instanceId.value, state.current.id);
       state.current.boards = (state.current.boards || []).map((x, i) => normalizeBoard(x, i));
       return {
-        id: slugify(el.instanceId.value, state.current.id),
+        id: currentId,
         name: cleanText(el.instanceName.value, state.current.id),
+        deviceType: normalizeDeviceType(el.deviceType.value),
         protocolVersion: "1.6",
         mqtt: {
-          lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(state.current.id)),
-          lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopic(state.current.id)),
+          lightCommandTopic: cleanText(el.lightTopicInput.value, defaultLightTopic(currentId)),
+          lightResponseTopic: cleanText(el.lightResponseTopicInput.value, defaultLightResponseTopicForDevice(currentId, el.deviceType.value)),
           lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
         },
         auth: {
@@ -574,17 +692,21 @@
       try {
         const id = slugify(el.newId.value, "dr154-1");
         const name = cleanText(el.newName.value, id);
+        const deviceType = normalizeDeviceType(el.newDeviceType.value);
         await api("/api/config/instances", {
           method: "POST",
           body: JSON.stringify({
             id,
             name,
+            deviceType,
+            applyDeviceDefaults: true,
             auth: { username: "", password: "" },
             boards: []
           })
         });
         el.newId.value = "";
         el.newName.value = "";
+        el.newDeviceType.value = state.defaultDeviceType;
         note(`Istanza '${id}' creata.`);
         await loadInstances(id);
       } catch (err) {
@@ -693,8 +815,18 @@
 
         const meta = await api("/api/config/meta", {}, !state.configAuthRequired || !!state.configToken);
         state.mqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154");
+        if (meta && typeof meta.deviceTypes === "object") {
+          const merged = { ...DEVICE_TYPE_META };
+          for (const [key, value] of Object.entries(meta.deviceTypes)) {
+            merged[key] = { ...(merged[key] || {}), ...(value && typeof value === "object" ? value : {}) };
+          }
+          state.deviceTypes = merged;
+        }
+        state.defaultDeviceType = normalizeDeviceType(meta.defaultDeviceType || state.defaultDeviceType || DEFAULT_DEVICE_TYPE);
+        el.newDeviceType.value = state.defaultDeviceType;
       } catch (_) {
         state.mqttBaseTopic = "dr154";
+        el.newDeviceType.value = state.defaultDeviceType;
       }
 
       if (state.configAuthRequired && !state.configToken) {
@@ -713,6 +845,25 @@
     }
 
     el.createForm.addEventListener("submit", createInstance);
+    el.deviceType.addEventListener("change", () => {
+      if (!state.current) return;
+      const previousType = normalizeDeviceType(state.current.deviceType);
+      const nextType = normalizeDeviceType(el.deviceType.value);
+      if (nextType === previousType) {
+        renderDeviceTypeHint();
+        return;
+      }
+      const label = deviceTypeLabel(nextType);
+      const ok = window.confirm(`Applicare il preset '${label}'? Verranno aggiornati topic MQTT, formato payload e schede dell'istanza corrente.`);
+      if (!ok) {
+        el.deviceType.value = previousType;
+        renderDeviceTypeHint();
+        return;
+      }
+      applyDevicePreset(state.current, nextType, slugify(el.instanceId.value, state.current.id));
+      renderEditor();
+      note(`Preset '${label}' applicato. Controlla nomi canali e stanze prima di salvare.`);
+    });
     el.addBoard.addEventListener("click", addBoard);
     el.saveBtn.addEventListener("click", () => saveCurrent(false).catch((err) => { if (!handleConfigAuthError(err)) note(err.message, true); }));
     el.publishBtn.addEventListener("click", publishCurrent);
