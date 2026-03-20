@@ -44,20 +44,24 @@ MQTT_PASSWORD=filippo1994
 3. Se impostato in `.env`, fai login config (`CONFIG_AUTH_USERNAME` / `CONFIG_AUTH_PASSWORD`).
 4. Seleziona il tipo dispositivo:
    - `Sheltr 4G / DR154`: profilo storico con configurazione attuale e payload `frame_*`.
-   - `Sheltr Mini`: profilo Sheltr Cloud con payload `json`.
+   - `Sheltr Mini`: profilo Sheltr Cloud standard del firmware Sheltr Mini.
 5. Il portale applica automaticamente il preset iniziale di topic, payload e scheda associata.
-   - Per `Sheltr Mini` imposta il `Base topic MQTT` del nodo, ad esempio `casa-pizero`.
-   - Da quel valore il portale deriva in automatico:
-     - `casa-pizero/config`
-     - `casa-pizero/cmd`
-     - `casa-pizero/pub`
-   - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo e pensato per autoconfigurarsi.
+   - Per `Sheltr Mini` la configurazione cloud e standard:
+     - `instanceId` = ID istanza
+     - `configTopic` = `<istanza>/config`
+     - `commandTopic` = `<istanza>/cmd`
+     - `responseTopic` = `<istanza>/pub`
+     - `payloadFormat` = `frame_hex_space_crlf`
+   - Per `Sheltr Mini` questi campi non si configurano manualmente nel portale.
+   - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo si sincronizza dai dispositivi pubblicati dal Mini sul topic retained `<istanza>/config`.
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
    - Questo passaggio vale per `Sheltr 4G / DR154`.
 7. Imposta indirizzo, range canali, nome canale e stanza.
 8. Imposta login per istanza (`username` e `password`) nella pagina config.
 9. Salva.
-10. Premi `Pubblica su MQTT` per inviare la configurazione.
+10. Premi `Pubblica su MQTT`.
+    - Per `Sheltr 4G / DR154` invia la configurazione su MQTT.
+    - Per `Sheltr Mini` esegue la sincronizzazione dal topic retained `<istanza>/config` pubblicato dal Mini.
 11. Apri il controllo dedicato su `/control/<istanza>`.
 12. Se `Sheltr 4G / DR154` è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
 13. Per `Sheltr 4G / DR154` imposta anche `Topic risposta dispositivo` uguale al `Publish topic` del DR154.
@@ -97,11 +101,12 @@ Configurazione DR154 consigliata:
 - `Subscriber topic` (DR154): `dr154/<istanza>/cmd/light`
 - `Publish topic` (DR154): `dr154/<istanza>/pub/light`
 
-Per `Sheltr Mini` con `Base topic MQTT = casa-pizero`:
+Per `Sheltr Mini` con istanza `casa-pizero`:
 
 - `Topic configurazione`: `casa-pizero/config`
 - `Topic comandi dispositivo`: `casa-pizero/cmd`
 - `Topic risposta dispositivo`: `casa-pizero/pub`
+- `Formato payload comandi`: `frame_hex_space_crlf`
 
 Nota: non usare la slash iniziale (`/`).  
 `dr154/casa-demo/cmd/light` e `/dr154/casa-demo/cmd/light` sono due topic diversi.

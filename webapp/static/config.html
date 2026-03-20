@@ -99,11 +99,11 @@
               <option value="sheltr_4g">Sheltr 4G / DR154</option>
             </select>
           </label>
-          <label>Base topic MQTT<input id="baseTopicInput" placeholder="es. casa-pizero"></label>
-          <label>Topic configurazione<input id="configTopicInput" placeholder="es. casa-pizero/config"></label>
-          <label>Topic comandi dispositivo<input id="lightTopicInput"></label>
-          <label>Topic risposta dispositivo<input id="lightResponseTopicInput" placeholder="es. casa-pizero/pub oppure dr154/casa-demo/pub/light"></label>
-          <label>Formato payload
+          <label id="baseTopicField">Base topic MQTT<input id="baseTopicInput" placeholder="es. casa-pizero"></label>
+          <label id="configTopicField">Topic configurazione<input id="configTopicInput" placeholder="es. casa-pizero/config"></label>
+          <label id="lightTopicField">Topic comandi dispositivo<input id="lightTopicInput"></label>
+          <label id="lightResponseTopicField">Topic risposta dispositivo<input id="lightResponseTopicInput" placeholder="es. casa-pizero/pub oppure dr154/casa-demo/pub/light"></label>
+          <label id="lightPayloadFormatField">Formato payload
             <select id="lightPayloadFormat">
               <option value="frame_hex_space">Frame HEX con spazi</option>
               <option value="frame_hex_compact">Frame HEX compatto</option>
@@ -152,10 +152,10 @@
     const DEVICE_TYPE_META = {
       sheltr_mini: {
         label: "Sheltr Mini",
-        description: "Profilo Sheltr Cloud con payload MQTT JSON e configurazione pubblicata dei dispositivi associati.",
+        description: "Profilo Sheltr Cloud standard del firmware Sheltr Mini.",
         module: "SHELTR_MINI",
         transport: "mqtt_json",
-        defaultPayloadFormat: "json",
+        defaultPayloadFormat: "frame_hex_space_crlf",
         defaultBoard: { id: "board-1", name: "Sheltr Mini", kind: "light", address: 1, channelStart: 1, channelEnd: 8 }
       },
       sheltr_4g: {
@@ -199,6 +199,11 @@
       instanceName: document.getElementById("instanceName"),
       deviceType: document.getElementById("deviceType"),
       deviceTypeHint: document.getElementById("deviceTypeHint"),
+      baseTopicField: document.getElementById("baseTopicField"),
+      configTopicField: document.getElementById("configTopicField"),
+      lightTopicField: document.getElementById("lightTopicField"),
+      lightResponseTopicField: document.getElementById("lightResponseTopicField"),
+      lightPayloadFormatField: document.getElementById("lightPayloadFormatField"),
       baseTopicInput: document.getElementById("baseTopicInput"),
       configTopicInput: document.getElementById("configTopicInput"),
       lightTopicInput: document.getElementById("lightTopicInput"),
@@ -305,7 +310,7 @@
     function defaultDeviceBaseTopic(instanceId, deviceType) {
       const normalized = normalizeDeviceType(deviceType);
       return normalized === "sheltr_mini"
-        ? cleanTopicPath(instanceId, "sheltr-mini")
+        ? cleanTopicPath(slugify(instanceId, "sheltr-mini"), "sheltr-mini")
         : cleanTopicPath(`${state.mqttBaseTopic}/${instanceId}`, defaultConfigTopic(instanceId).replace(/\/config$/, ""));
     }
 
@@ -368,12 +373,17 @@
     function applyBaseTopicDerivedFields() {
       const deviceType = normalizeDeviceType(el.deviceType.value || state.current?.deviceType || state.defaultDeviceType);
       const instanceId = slugify(el.instanceId.value || state.current?.id || "dr154-1", "dr154-1");
-      const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(instanceId, deviceType));
+      const baseTopic = deviceType === "sheltr_mini"
+        ? defaultDeviceBaseTopic(instanceId, deviceType)
+        : cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(instanceId, deviceType));
       const topics = topicsFromBaseTopic(baseTopic, deviceType);
       el.baseTopicInput.value = topics.baseTopic;
       el.configTopicInput.value = topics.configTopic;
       el.lightTopicInput.value = topics.lightCommandTopic;
       el.lightResponseTopicInput.value = topics.lightResponseTopic;
+      if (deviceType === "sheltr_mini") {
+        el.lightPayloadFormat.value = cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf");
+      }
       renderDeviceTypeHint();
     }
 
@@ -386,17 +396,36 @@
       const meta = deviceTypeMeta(type);
       const instanceId = slugify(el.instanceId.value || state.current?.id || "dr154-1", "dr154-1");
       const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(instanceId, type));
+      const topics = topicsFromBaseTopic(baseTopic, type);
       const bits = [
         cleanText(meta.description, ""),
-        `Base topic: ${baseTopic || "-"}`,
-        `Config: ${topicsFromBaseTopic(baseTopic, type).configTopic || "-"}`,
         `Modulo: ${cleanText(meta.module, "-")}`,
-        `Payload default: ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")}`,
         type === "sheltr_mini"
-          ? "Sheltr Mini usa autoconfigurazione: qui non devi impostare schede manuali."
+          ? `Cloud standard: ${topics.configTopic || "-"} / ${topics.lightCommandTopic || "-"} / ${topics.lightResponseTopic || "-"} • formato ${cleanText(meta.defaultPayloadFormat, "frame_hex_space_crlf")} • il Mini pubblica la config retained su /config`
           : "Compatibile con la configurazione DR154 attuale."
       ];
       el.deviceTypeHint.textContent = bits.filter(Boolean).join(" • ");
+    }
+
+    function renderTransportFields() {
+      if (!state.current) return;
+      const type = normalizeDeviceType(el.deviceType.value || state.current.deviceType);
+      const instanceId = slugify(el.instanceId.value || state.current.id || "dr154-1", "dr154-1");
+      const hideForMini = type === "sheltr_mini";
+      const topics = topicsFromBaseTopic(defaultDeviceBaseTopic(instanceId, type), type);
+      if (hideForMini) {
+        el.baseTopicInput.value = topics.baseTopic;
+        el.configTopicInput.value = topics.configTopic;
+        el.lightTopicInput.value = topics.lightCommandTopic;
+        el.lightResponseTopicInput.value = topics.lightResponseTopic;
+        el.lightPayloadFormat.value = cleanText(deviceTypeMeta(type).defaultPayloadFormat, "frame_hex_space_crlf");
+      }
+      el.baseTopicField.classList.toggle("hidden", hideForMini);
+      el.configTopicField.classList.toggle("hidden", hideForMini);
+      el.lightTopicField.classList.toggle("hidden", hideForMini);
+      el.lightResponseTopicField.classList.toggle("hidden", hideForMini);
+      el.lightPayloadFormatField.classList.toggle("hidden", hideForMini);
+      el.publishBtn.textContent = hideForMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT";
     }
 
     function controlUrl(instanceId) {
@@ -637,6 +666,7 @@
         : (associatedDevicesCount(state.current) ? `AUTO (${associatedDevicesCount(state.current)} dispositivi)` : "AUTO");
       el.addBoard.classList.toggle("hidden", !deviceUsesManualBoards(state.current.deviceType));
 
+      renderTransportFields();
       renderDeviceTypeHint();
       renderBoards();
     }
@@ -757,7 +787,9 @@
       if (!state.current) return null;
       const currentId = slugify(el.instanceId.value, state.current.id);
       const deviceType = normalizeDeviceType(el.deviceType.value);
-      const baseTopic = cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(currentId, deviceType));
+      const baseTopic = deviceType === "sheltr_mini"
+        ? defaultDeviceBaseTopic(currentId, deviceType)
+        : cleanTopicPath(el.baseTopicInput.value, defaultDeviceBaseTopic(currentId, deviceType));
       const derivedTopics = topicsFromBaseTopic(baseTopic, deviceType);
       const preservedBoards = Array.isArray(state.current.boards)
         ? state.current.boards.filter((item) => item && typeof item === "object")
@@ -772,10 +804,12 @@
         protocolVersion: "1.6",
         mqtt: {
           baseTopic,
-          configTopic: cleanText(el.configTopicInput.value, derivedTopics.configTopic),
-          lightCommandTopic: cleanText(el.lightTopicInput.value, derivedTopics.lightCommandTopic || defaultLightTopic(currentId)),
-          lightResponseTopic: cleanText(el.lightResponseTopicInput.value, derivedTopics.lightResponseTopic || defaultLightResponseTopicForDevice(currentId, deviceType)),
-          lightPayloadFormat: cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
+          configTopic: deviceType === "sheltr_mini" ? derivedTopics.configTopic : cleanText(el.configTopicInput.value, derivedTopics.configTopic),
+          lightCommandTopic: deviceType === "sheltr_mini" ? derivedTopics.lightCommandTopic : cleanText(el.lightTopicInput.value, derivedTopics.lightCommandTopic || defaultLightTopic(currentId)),
+          lightResponseTopic: deviceType === "sheltr_mini" ? derivedTopics.lightResponseTopic : cleanText(el.lightResponseTopicInput.value, derivedTopics.lightResponseTopic || defaultLightResponseTopicForDevice(currentId, deviceType)),
+          lightPayloadFormat: deviceType === "sheltr_mini"
+            ? cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf")
+            : cleanText(el.lightPayloadFormat.value, "frame_hex_space_crlf")
         },
         auth: {
           username: cleanText(el.authUsername.value, ""),
@@ -865,13 +899,18 @@
           await loadInstances(state.current.id);
         }
         const autoconfig = res.autoconfig && typeof res.autoconfig === "object" ? res.autoconfig : null;
+        const isMini = normalizeDeviceType(saved.deviceType) === "sheltr_mini";
         if (autoconfig && autoconfig.ok) {
-          note(`Configurazione pubblicata su '${res.topic}'. Autoconfigurazione completata: ${autoconfig.devicesCount || 0} dispositivi rilevati.`);
+          note(
+            isMini
+              ? `Sheltr Mini sincronizzato da '${autoconfig.topic || res.topic}'. Rilevati ${autoconfig.devicesCount || 0} dispositivi.`
+              : `Configurazione pubblicata su '${res.topic}'. Autoconfigurazione completata: ${autoconfig.devicesCount || 0} dispositivi rilevati.`
+          );
           return;
         }
-        if (normalizeDeviceType(saved.deviceType) === "sheltr_mini") {
+        if (isMini) {
           const reason = cleanText(autoconfig?.error, "nessun payload dispositivi ricevuto");
-          note(`Configurazione pubblicata su '${res.topic}', ma l'autoconfigurazione non ha restituito dispositivi: ${reason}.`, true);
+          note(`Sheltr Mini non sincronizzato da '${autoconfig?.topic || res.topic}': ${reason}.`, true);
           return;
         }
         note(`Configurazione pubblicata su '${res.topic}'.`);
@@ -981,7 +1020,7 @@
     el.createForm.addEventListener("submit", createInstance);
     el.baseTopicInput.addEventListener("change", applyBaseTopicDerivedFields);
     el.baseTopicInput.addEventListener("input", renderDeviceTypeHint);
-    el.instanceId.addEventListener("input", renderDeviceTypeHint);
+    el.instanceId.addEventListener("input", () => { renderTransportFields(); renderDeviceTypeHint(); });
     el.deviceType.addEventListener("change", () => {
       if (!state.current) return;
       const previousType = normalizeDeviceType(state.current.deviceType);

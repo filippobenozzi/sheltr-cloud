@@ -100,10 +100,10 @@ DEFAULT_DEVICE_TYPE = "sheltr_4g"
 DEVICE_TYPE_META = {
     "sheltr_mini": {
         "label": "Sheltr Mini",
-        "description": "Profilo Sheltr Cloud con payload MQTT JSON.",
+        "description": "Profilo Sheltr Cloud standard del firmware Sheltr Mini.",
         "module": "SHELTR_MINI",
         "transport": "mqtt_json",
-        "defaultPayloadFormat": "json",
+        "defaultPayloadFormat": "frame_hex_space_crlf",
         "supportsFramePolling": False,
         "defaultBoard": {
             "id": "board-1",
@@ -342,40 +342,169 @@ def normalize_imported_kind(value: Any) -> str:
     raw = clean_text(value, "").lower()
     aliases = {
         "light": "light",
+        "lights": "light",
         "switch": "light",
+        "switches": "light",
         "relay": "light",
+        "relays": "light",
         "luce": "light",
         "luci": "light",
         "shutter": "shutter",
+        "shutters": "shutter",
         "cover": "shutter",
+        "covers": "shutter",
         "blind": "shutter",
+        "blinds": "shutter",
         "tapparella": "shutter",
         "tapparelle": "shutter",
         "dimmer": "dimmer",
+        "dimmers": "dimmer",
         "thermostat": "thermostat",
+        "thermostats": "thermostat",
         "climate": "thermostat",
+        "climates": "thermostat",
         "termostato": "thermostat",
-        "termostato": "thermostat",
+        "termostati": "thermostat",
     }
     return aliases.get(raw, "")
 
 
+def imported_kind_from_container_key(value: Any) -> str:
+    raw = clean_text(value, "").lower().replace("-", "_").replace(" ", "_")
+    return normalize_imported_kind(raw)
+
+
+def imported_device_candidate(
+    raw: Any,
+    *,
+    kind_hint: str = "",
+    fallback_id: str = "",
+) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    candidate = dict(raw)
+    kind = normalize_imported_kind(
+        candidate.get("kind")
+        or candidate.get("type")
+        or candidate.get("domain")
+        or candidate.get("component")
+        or candidate.get("deviceType")
+        or candidate.get("entityType")
+        or candidate.get("deviceClass")
+        or kind_hint
+    )
+    if kind not in KIND_META:
+        return None
+    device_id = clean_text(
+        candidate.get("deviceId")
+        or candidate.get("sourceId")
+        or candidate.get("entityId")
+        or candidate.get("id")
+        or candidate.get("key")
+        or fallback_id,
+        "",
+    )
+    name = clean_text(candidate.get("name") or candidate.get("label") or candidate.get("title"), "")
+    if not device_id and not name:
+        return None
+    if device_id and not clean_text(candidate.get("id"), ""):
+        candidate["id"] = device_id
+    if kind_hint and not any(clean_text(candidate.get(key), "") for key in ("kind", "type", "domain", "component", "deviceType", "entityType", "deviceClass")):
+        candidate["kind"] = kind
+    return candidate
+
+
 def extract_imported_devices(payload: Any, *, depth: int = 0) -> list[dict[str, Any]]:
-    if depth > 4:
+    if depth > 6:
         return []
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("devices", "entities", "items", "results"):
-        value = payload.get(key)
+    found: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_candidate(item: dict[str, Any] | None) -> None:
+        if not isinstance(item, dict):
+            return
+        kind = normalize_imported_kind(
+            item.get("kind") or item.get("type") or item.get("domain") or item.get("component") or item.get("deviceType")
+        )
+        if kind not in KIND_META:
+            return
+        device_id = clean_text(item.get("deviceId") or item.get("sourceId") or item.get("entityId") or item.get("id"), "")
+        name = clean_text(item.get("name") or item.get("label") or item.get("title"), "")
+        remember = (kind, device_id, name.lower())
+        if remember in seen:
+            return
+        seen.add(remember)
+        found.append(item)
+
+    def scan(value: Any, *, key_hint: str = "", level: int = 0) -> None:
+        if level > 6:
+            return
         if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    for key in ("payload", "data", "config", "state", "result", "instance"):
-        nested = extract_imported_devices(payload.get(key), depth=depth + 1)
-        if nested:
-            return nested
-    return []
+            for idx, item in enumerate(value):
+                candidate = imported_device_candidate(item, kind_hint=imported_kind_from_container_key(key_hint), fallback_id=f"{key_hint or 'item'}-{idx + 1}")
+                if candidate is not None:
+                    add_candidate(candidate)
+                else:
+                    scan(item, key_hint=key_hint, level=level + 1)
+            return
+        if not isinstance(value, dict):
+            return
+
+        direct = imported_device_candidate(value, kind_hint=imported_kind_from_container_key(key_hint), fallback_id=key_hint)
+        if direct is not None:
+            add_candidate(direct)
+
+        preferred_keys = (
+            "devices",
+            "entities",
+            "items",
+            "results",
+            "lights",
+            "switches",
+            "relays",
+            "shutters",
+            "covers",
+            "blinds",
+            "dimmers",
+            "thermostats",
+            "climates",
+        )
+        nested_keys = ("payload", "data", "config", "state", "result", "instance")
+
+        for key in preferred_keys:
+            child = value.get(key)
+            if child is None:
+                continue
+            child_hint = imported_kind_from_container_key(key)
+            if isinstance(child, dict):
+                child_candidate = imported_device_candidate(child, kind_hint=child_hint, fallback_id=key)
+                if child_candidate is not None:
+                    add_candidate(child_candidate)
+                else:
+                    for map_key, map_value in child.items():
+                        if isinstance(map_value, dict):
+                            map_candidate = imported_device_candidate(map_value, kind_hint=child_hint, fallback_id=clean_text(map_key, key))
+                            if map_candidate is not None:
+                                add_candidate(map_candidate)
+                            else:
+                                scan(map_value, key_hint=key, level=level + 1)
+                        else:
+                            scan(map_value, key_hint=key, level=level + 1)
+            else:
+                scan(child, key_hint=key, level=level + 1)
+
+        for key in nested_keys:
+            if key in value:
+                scan(value.get(key), key_hint=key, level=level + 1)
+
+        for key, child in value.items():
+            if key in preferred_keys or key in nested_keys:
+                continue
+            if imported_kind_from_container_key(key):
+                scan(child, key_hint=key, level=level + 1)
+
+    scan(payload, level=depth)
+    return found
 
 
 def build_boards_from_imported_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -688,35 +817,42 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     mqtt_in = payload.get("mqtt") if isinstance(payload.get("mqtt"), dict) else {}
     mqtt_current = current.get("mqtt") if isinstance(current.get("mqtt"), dict) else {}
     mqtt_defaults = build_device_default_mqtt(device_type, instance_id)
-    current_base_topic = infer_base_topic_from_mqtt(mqtt_current, mqtt_defaults["baseTopic"])
-    base_topic = clean_topic_path(
-        mqtt_in.get("baseTopic"),
-        mqtt_defaults["baseTopic"] if apply_device_defaults else current_base_topic,
-    )
-    mqtt_topics = topics_from_base_topic(base_topic, device_type)
-    mqtt_fallback = mqtt_defaults if apply_device_defaults else mqtt_current
-    config_topic = clean_text(
-        mqtt_in.get("configTopic"),
-        clean_text(mqtt_fallback.get("configTopic"), mqtt_topics["configTopic"]),
-    )
-    light_command_topic = clean_text(
-        mqtt_in.get("lightCommandTopic"),
-        clean_text(mqtt_fallback.get("lightCommandTopic"), mqtt_topics["lightCommandTopic"]),
-    )
-    response_raw = mqtt_in.get("lightResponseTopic")
-    if isinstance(response_raw, str):
-        light_response_topic = response_raw.strip()
+    if device_type == "sheltr_mini":
+        base_topic = mqtt_defaults["baseTopic"]
+        config_topic = mqtt_defaults["configTopic"]
+        light_command_topic = mqtt_defaults["lightCommandTopic"]
+        light_response_topic = mqtt_defaults["lightResponseTopic"]
+        light_payload_format = mqtt_defaults["lightPayloadFormat"]
     else:
-        light_response_topic = clean_text(
-            mqtt_fallback.get("lightResponseTopic"),
-            clean_text(mqtt_topics.get("lightResponseTopic"), ""),
+        current_base_topic = infer_base_topic_from_mqtt(mqtt_current, mqtt_defaults["baseTopic"])
+        base_topic = clean_topic_path(
+            mqtt_in.get("baseTopic"),
+            mqtt_defaults["baseTopic"] if apply_device_defaults else current_base_topic,
         )
-    light_payload_format = clean_text(
-        mqtt_in.get("lightPayloadFormat"),
-        clean_text(mqtt_fallback.get("lightPayloadFormat"), mqtt_defaults["lightPayloadFormat"]),
-    ).lower()
-    if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
-        light_payload_format = "frame_hex_space_crlf"
+        mqtt_topics = topics_from_base_topic(base_topic, device_type)
+        mqtt_fallback = mqtt_defaults if apply_device_defaults else mqtt_current
+        config_topic = clean_text(
+            mqtt_in.get("configTopic"),
+            clean_text(mqtt_fallback.get("configTopic"), mqtt_topics["configTopic"]),
+        )
+        light_command_topic = clean_text(
+            mqtt_in.get("lightCommandTopic"),
+            clean_text(mqtt_fallback.get("lightCommandTopic"), mqtt_topics["lightCommandTopic"]),
+        )
+        response_raw = mqtt_in.get("lightResponseTopic")
+        if isinstance(response_raw, str):
+            light_response_topic = response_raw.strip()
+        else:
+            light_response_topic = clean_text(
+                mqtt_fallback.get("lightResponseTopic"),
+                clean_text(mqtt_topics.get("lightResponseTopic"), ""),
+            )
+        light_payload_format = clean_text(
+            mqtt_in.get("lightPayloadFormat"),
+            clean_text(mqtt_fallback.get("lightPayloadFormat"), mqtt_defaults["lightPayloadFormat"]),
+        ).lower()
+        if light_payload_format not in LIGHT_PAYLOAD_FORMATS:
+            light_payload_format = "frame_hex_space_crlf"
 
     auth_in = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
     auth_current = current.get("auth") if isinstance(current.get("auth"), dict) else {}
@@ -1578,10 +1714,13 @@ def mqtt_publish_and_wait_for_autoconfig_payload(
 
 
 def get_autoconfig_topics(instance: dict[str, Any]) -> list[str]:
-    topics = [
-        get_light_response_topic(instance),
-        get_config_publish_topic(instance),
-    ]
+    if instance_device_type(instance) == "sheltr_mini":
+        topics = [get_config_publish_topic(instance)]
+    else:
+        topics = [
+            get_light_response_topic(instance),
+            get_config_publish_topic(instance),
+        ]
     out: list[str] = []
     for topic in topics:
         cleaned = clean_text(topic, "")
@@ -3447,43 +3586,13 @@ def api_publish_instance(instance_id: str):
 
     autoconfig: dict[str, Any] | None = None
     try:
-        payload = instance_publish_payload(instance)
         if instance_device_type(instance) == "sheltr_mini":
-            outcome = mqtt_publish_and_wait_for_autoconfig_payload(
-                publish_topic=topic,
-                publish_payload=payload,
-                listen_topics=get_autoconfig_topics(instance),
-                timeout_ms=MQTT_AUTOCONFIG_TIMEOUT_MS,
-                publish_qos=MQTT_CONFIG_QOS,
-                listen_qos=MQTT_CONFIG_QOS,
-                retain=True,
-                retries=1,
-                retry_delay_ms=200,
-            )
-            if outcome.get("ok") and isinstance(outcome.get("boards"), list):
-                boards = [normalize_board(item, idx) for idx, item in enumerate(outcome["boards"]) if isinstance(item, dict)]
-                if boards:
-                    updated = updated_instance_with_autoconfig_boards(instance, boards)
-                    saved = replace_instance_in_store(instance_id_real, updated)
-                    if saved is not None:
-                        instance = saved
-                    else:
-                        instance = updated
-                    autoconfig = {
-                        "ok": True,
-                        "topic": clean_text(outcome.get("topic"), ""),
-                        "attempt": to_int(outcome.get("attempt"), 1),
-                        "boardsCount": len(boards),
-                        "devicesCount": len(instance_associated_devices(instance)),
-                        "retain": bool(outcome.get("retain")),
-                    }
-            else:
-                autoconfig = {
-                    "ok": False,
-                    "topic": clean_text(outcome.get("topic"), ""),
-                    "error": clean_text(outcome.get("error"), "timeout_autoconfigurazione"),
-                }
+            synced, info = sync_autoconfig_instance_in_store(instance_id_real)
+            if synced is not None:
+                instance = synced
+            autoconfig = info
         else:
+            payload = instance_publish_payload(instance)
             mqtt_publish(topic, payload, qos=MQTT_CONFIG_QOS, retain=True, retries=1, retry_delay_ms=200)
     except Exception as exc:  # noqa: BLE001
         return err(f"Errore pubblicazione MQTT: {exc}", 502)
@@ -3493,6 +3602,7 @@ def api_publish_instance(instance_id: str):
         "topic": topic,
         "qos": MQTT_CONFIG_QOS,
         "retain": True,
+        "action": "sync" if instance_device_type(instance) == "sheltr_mini" else "publish",
         "instance": instance_public(instance),
     }
     if isinstance(autoconfig, dict):
