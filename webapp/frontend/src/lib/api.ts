@@ -5,8 +5,10 @@ type TokenConfig = {
   bodyField: string
 }
 
+type ApiBody = BodyInit | Record<string, unknown> | null
+
 type ApiOptions = Omit<RequestInit, "body"> & {
-  body?: BodyInit | Record<string, unknown> | null
+  body?: ApiBody
   tokenConfig?: TokenConfig
 }
 
@@ -22,15 +24,20 @@ export class ApiError extends Error {
   }
 }
 
-function addTokenToRequest(path: string, body: ApiOptions["body"], method: string, tokenConfig?: TokenConfig) {
+function addTokenToRequest(
+  path: string,
+  body: ApiBody | undefined,
+  method: string,
+  tokenConfig?: TokenConfig
+): { path: string; body: ApiBody } {
   if (!tokenConfig?.token) {
-    return { path, body }
+    return { path, body: body ?? null }
   }
 
   const url = new URL(path, window.location.origin)
   url.searchParams.set(tokenConfig.queryName, tokenConfig.token)
 
-  let nextBody = body
+  let nextBody: ApiBody = body ?? null
   if (method !== "GET" && method !== "HEAD") {
     if (typeof nextBody === "string") {
       try {
@@ -44,8 +51,16 @@ function addTokenToRequest(path: string, body: ApiOptions["body"], method: strin
       }
     } else if (nextBody == null) {
       nextBody = { [tokenConfig.bodyField]: tokenConfig.token }
-    } else if (!(nextBody instanceof FormData) && !(tokenConfig.bodyField in nextBody)) {
-      nextBody = { ...nextBody, [tokenConfig.bodyField]: tokenConfig.token }
+    } else if (
+      typeof nextBody === "object" &&
+      !(nextBody instanceof FormData) &&
+      !(nextBody instanceof Blob) &&
+      !(nextBody instanceof URLSearchParams)
+    ) {
+      const record = nextBody as Record<string, unknown>
+      if (!(tokenConfig.bodyField in record)) {
+        nextBody = { ...record, [tokenConfig.bodyField]: tokenConfig.token }
+      }
     }
   }
 
