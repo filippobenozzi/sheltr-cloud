@@ -1,12 +1,20 @@
 import { type FormEvent, useEffect, useState } from "react"
-import { Link, useLocation, useParams } from "react-router-dom"
-import { Copy, ExternalLink, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
+import { Copy, ExternalLink, LayoutList, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -16,7 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { apiJson, ApiError, configTokenConfig } from "@/lib/api"
@@ -106,6 +113,10 @@ function forcedInstanceFromLocation(pathname: string, search: string) {
 
 function controlUrl(instanceId: string) {
   return `/control/${encodeURIComponent(instanceId)}`
+}
+
+function instanceConfigUrl(instanceId: string) {
+  return `/instance/${encodeURIComponent(instanceId)}/config`
 }
 
 function normalizeDeviceTypes(meta?: Record<string, DeviceTypePublic>) {
@@ -229,12 +240,27 @@ function transportHint(editor: EditorInstance, mqttBaseTopic: string, deviceType
   return parts.filter(Boolean).join(" • ")
 }
 
+function transportFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
+  return topicsFromBaseTopic(defaultDeviceBaseTopic(editor.id, editor.deviceType, mqttBaseTopic), editor.deviceType)
+}
+
 function formatUpdatedAt(value?: string) {
   if (!value) {
     return ""
   }
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("it-IT")
+}
+
+function instanceInventoryLabel(deviceType: DeviceType, count: number) {
+  return deviceType === "sheltr_mini" ? "AUTO" : `${count} schede`
+}
+
+function fullControlUrl(instanceId: string) {
+  if (typeof window === "undefined") {
+    return controlUrl(instanceId)
+  }
+  return `${window.location.origin}${controlUrl(instanceId)}`
 }
 
 function BoardEditor({
@@ -327,7 +353,12 @@ function BoardEditor({
                 max={maxChannels}
                 value={board.channelStart}
                 onChange={(event) =>
-                  onChange(normalizeBoard({ ...board, channelStart: clamp(toInt(event.target.value, board.channelStart), 1, maxChannels) }, boardIndex))
+                  onChange(
+                    normalizeBoard(
+                      { ...board, channelStart: clamp(toInt(event.target.value, board.channelStart), 1, maxChannels) },
+                      boardIndex
+                    )
+                  )
                 }
               />
             </div>
@@ -339,7 +370,12 @@ function BoardEditor({
                 max={maxChannels}
                 value={board.channelEnd}
                 onChange={(event) =>
-                  onChange(normalizeBoard({ ...board, channelEnd: clamp(toInt(event.target.value, board.channelEnd), 1, maxChannels) }, boardIndex))
+                  onChange(
+                    normalizeBoard(
+                      { ...board, channelEnd: clamp(toInt(event.target.value, board.channelEnd), 1, maxChannels) },
+                      boardIndex
+                    )
+                  )
                 }
               />
             </div>
@@ -389,9 +425,173 @@ function BoardEditor({
   )
 }
 
+function CreateInstanceDialog({
+  open,
+  onOpenChange,
+  newId,
+  setNewId,
+  newName,
+  setNewName,
+  newDeviceType,
+  setNewDeviceType,
+  deviceTypes,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  newId: string
+  setNewId: (value: string) => void
+  newName: string
+  setNewName: (value: string) => void
+  newDeviceType: DeviceType
+  setNewDeviceType: (value: DeviceType) => void
+  deviceTypes: Record<string, DeviceTypePublic>
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Aggiungi istanza</DialogTitle>
+          <DialogDescription>
+            Crea una nuova istanza Sheltr e apri subito la sua configurazione dedicata.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <div className="space-y-2">
+            <Label>ID istanza</Label>
+            <Input value={newId} onChange={(event) => setNewId(event.target.value)} placeholder="es. casa-demo" autoFocus />
+          </div>
+          <div className="space-y-2">
+            <Label>Nome istanza</Label>
+            <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="es. Casa Demo" />
+          </div>
+          <div className="space-y-2">
+            <Label>Tipo dispositivo</Label>
+            <Select value={newDeviceType} onValueChange={(value) => setNewDeviceType(normalizeDeviceType(value))}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(deviceTypes).map(([value, meta]) => (
+                  <SelectItem key={value} value={value}>
+                    {cleanText(meta.label, value)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Annulla
+            </Button>
+            <Button type="submit">
+              <Plus className="size-4" />
+              Crea istanza
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function InstancesTable({
+  instances,
+  currentId,
+  deviceTypes,
+  onCopy,
+}: {
+  instances: ConfigInstanceListItem[]
+  currentId: string
+  deviceTypes: Record<string, DeviceTypePublic>
+  onCopy: (value: string) => void
+}) {
+  if (!instances.length) {
+    return (
+      <Alert>
+        <AlertTitle>Nessuna istanza</AlertTitle>
+        <AlertDescription>
+          Usa “Aggiungi istanza” dalla sidebar o dalla top navbar per creare la prima configurazione.
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border">
+      <table className="min-w-full text-sm">
+        <thead className="bg-muted/40 text-left text-muted-foreground">
+          <tr className="border-b">
+            <th className="px-4 py-3 font-medium">Istanza</th>
+            <th className="px-4 py-3 font-medium">Tipo</th>
+            <th className="px-4 py-3 font-medium">Inventario</th>
+            <th className="px-4 py-3 font-medium">Accesso</th>
+            <th className="px-4 py-3 font-medium">Aggiornata</th>
+            <th className="px-4 py-3 text-right font-medium">Azioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {instances.map((instance) => {
+            const active = instance.id === currentId
+            const typeLabel = cleanText(instance.deviceLabel, deviceTypes[instance.deviceType]?.label || instance.deviceType)
+            return (
+              <tr key={instance.id} className={`border-b last:border-b-0 ${active ? "bg-muted/20" : "bg-background"}`}>
+                <td className="px-4 py-4">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-foreground">{instance.name}</p>
+                      {active ? <Badge variant="secondary">Aperta</Badge> : null}
+                    </div>
+                    <p className="font-mono text-xs text-muted-foreground">{instance.id}</p>
+                  </div>
+                </td>
+                <td className="px-4 py-4">
+                  <Badge variant="outline">{typeLabel}</Badge>
+                </td>
+                <td className="px-4 py-4 text-muted-foreground">
+                  {instanceInventoryLabel(normalizeDeviceType(instance.deviceType), instance.boardsCount)}
+                </td>
+                <td className="px-4 py-4">
+                  {instance.authRequired ? <Badge variant="secondary">Protetta</Badge> : <Badge variant="outline">Diretta</Badge>}
+                </td>
+                <td className="px-4 py-4 text-muted-foreground">{formatUpdatedAt(instance.updatedAt) || "-"}</td>
+                <td className="px-4 py-4">
+                  <div className="flex justify-end gap-2">
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={instanceConfigUrl(instance.id)}>
+                        <Settings2 className="size-4" />
+                        Config
+                      </Link>
+                    </Button>
+                    <Button asChild size="sm" variant="ghost">
+                      <a href={instance.controlUrl || controlUrl(instance.id)} target="_blank" rel="noreferrer">
+                        <ExternalLink className="size-4" />
+                        Apri
+                      </a>
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => onCopy(fullControlUrl(instance.id))}>
+                      <Copy className="size-4" />
+                      Copia
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function ConfigPage() {
   const params = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
+
+  const routeInstanceId = slugify(params.instanceId || forcedInstanceFromLocation(location.pathname, location.search), "")
+  const listView = !routeInstanceId
 
   const [instances, setInstances] = useState<ConfigInstanceListItem[]>([])
   const [editor, setEditor] = useState<EditorInstance | null>(null)
@@ -406,6 +606,7 @@ export function ConfigPage() {
   const [newId, setNewId] = useState("")
   const [newName, setNewName] = useState("")
   const [newDeviceType, setNewDeviceType] = useState<DeviceType>(DEFAULT_DEVICE_TYPE)
+  const [createOpen, setCreateOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [note, setNote] = useState<NoteState>({ text: "", error: false })
 
@@ -417,8 +618,10 @@ export function ConfigPage() {
     if (error instanceof ApiError && error.status === 401) {
       setConfigToken("")
       localStorage.removeItem(configTokenKey())
+      setInstances([])
       setEditor(null)
       setCurrentId("")
+      navigate("/config", { replace: true })
       showNote("Sessione configurazione scaduta o non valida. Effettua il login config.", true)
       return true
     }
@@ -430,12 +633,21 @@ export function ConfigPage() {
       tokenConfig: configTokenConfig(tokenValue),
     })
     const resolvedMqttBaseTopic = cleanText(meta.mqttBaseTopic, "dr154")
+    const resolvedDefaultDeviceType = normalizeDeviceType(meta.defaultDeviceType || DEFAULT_DEVICE_TYPE)
     setMqttBaseTopic(resolvedMqttBaseTopic)
     setDeviceTypes(normalizeDeviceTypes(meta.deviceTypes))
-    const resolvedDefaultDeviceType = normalizeDeviceType(meta.defaultDeviceType || DEFAULT_DEVICE_TYPE)
     setDefaultDeviceType(resolvedDefaultDeviceType)
-    setNewDeviceType(resolvedDefaultDeviceType)
+    setNewDeviceType((current) => normalizeDeviceType(current, resolvedDefaultDeviceType))
     return resolvedMqttBaseTopic
+  }
+
+  async function loadInstancesList(tokenValue = configToken) {
+    const response = await apiJson<ConfigInstancesResponse>("/api/config/instances", {
+      tokenConfig: configTokenConfig(tokenValue),
+    })
+    const items = Array.isArray(response.instances) ? response.instances : []
+    setInstances(items)
+    return items
   }
 
   async function loadInstance(instanceId: string, tokenValue = configToken, mqttBaseTopicValue = mqttBaseTopic) {
@@ -445,28 +657,11 @@ export function ConfigPage() {
     })
     setCurrentId(response.instance.id)
     setEditor(editorFromInstance(response.instance, mqttBaseTopicValue))
-  }
-
-  async function loadInstances(preferredId = "", tokenValue = configToken, mqttBaseTopicValue = mqttBaseTopic) {
-    const response = await apiJson<ConfigInstancesResponse>("/api/config/instances", {
-      tokenConfig: configTokenConfig(tokenValue),
-    })
-    const items = Array.isArray(response.instances) ? response.instances : []
-    setInstances(items)
-
-    const selected = preferredId || currentId
-    if (selected && items.some((item) => item.id === selected)) {
-      await loadInstance(selected, tokenValue, mqttBaseTopicValue)
-      return
-    }
-
-    setCurrentId("")
-    setEditor(null)
+    return response.instance
   }
 
   useEffect(() => {
     let cancelled = false
-    const preferredId = slugify(params.instanceId || forcedInstanceFromLocation(location.pathname, location.search), "")
 
     async function bootstrap() {
       setLoading(true)
@@ -481,26 +676,33 @@ export function ConfigPage() {
         setConfigToken(storedToken)
 
         if (authRequired && !storedToken) {
-          setMqttBaseTopic("dr154")
-          setDeviceTypes({ ...DEVICE_TYPE_META })
-          setDefaultDeviceType(DEFAULT_DEVICE_TYPE)
-          setNewDeviceType(DEFAULT_DEVICE_TYPE)
+          setInstances([])
           setEditor(null)
           setCurrentId("")
+          setLoading(false)
           showNote("Login configurazione richiesto.")
           return
         }
 
-        const baseTopicValue = await loadConfigMeta(authRequired ? storedToken : "")
+        const tokenValue = authRequired ? storedToken : ""
+        const baseTopicValue = await loadConfigMeta(tokenValue)
         if (cancelled) return
 
-        await loadInstances(preferredId, authRequired ? storedToken : "", baseTopicValue)
-        if (!cancelled) {
-          showNote("Pronto.")
+        await loadInstancesList(tokenValue)
+        if (cancelled) return
+
+        if (routeInstanceId) {
+          await loadInstance(routeInstanceId, tokenValue, baseTopicValue)
+        } else {
+          setEditor(null)
+          setCurrentId("")
         }
       } catch (caught) {
         if (cancelled) return
         if (!handleConfigAuthError(caught)) {
+          setInstances([])
+          setEditor(null)
+          setCurrentId("")
           showNote(caught instanceof Error ? caught.message : "Errore caricamento configurazione", true)
         }
       } finally {
@@ -515,14 +717,14 @@ export function ConfigPage() {
     return () => {
       cancelled = true
     }
-  }, [location.pathname, location.search, params.instanceId])
+  }, [routeInstanceId, navigate])
 
   async function copyText(value: string) {
     try {
       await navigator.clipboard.writeText(value)
-      return true
+      showNote(`Copiato: ${value}`)
     } catch {
-      return false
+      showNote("Copia non riuscita", true)
     }
   }
 
@@ -532,7 +734,7 @@ export function ConfigPage() {
       const id = slugify(newId, "dr154-1")
       const name = cleanText(newName, id)
       const deviceType = normalizeDeviceType(newDeviceType)
-      await apiJson<ConfigInstanceResponse>("/api/config/instances", {
+      const response = await apiJson<ConfigInstanceResponse>("/api/config/instances", {
         method: "POST",
         body: {
           id,
@@ -544,11 +746,13 @@ export function ConfigPage() {
         },
         tokenConfig: configTokenConfig(configToken),
       })
+      setCreateOpen(false)
       setNewId("")
       setNewName("")
       setNewDeviceType(defaultDeviceType)
-      showNote(`Istanza '${id}' creata.`)
-      await loadInstances(id)
+      await loadInstancesList()
+      showNote(`Istanza '${response.instance.id}' creata.`)
+      navigate(instanceConfigUrl(response.instance.id))
     } catch (caught) {
       if (!handleConfigAuthError(caught)) {
         showNote(caught instanceof Error ? caught.message : "Creazione istanza non riuscita", true)
@@ -566,13 +770,17 @@ export function ConfigPage() {
       body: payload,
       tokenConfig: configTokenConfig(configToken),
     })
-    setCurrentId(response.instance.id)
-    setEditor(editorFromInstance(response.instance, mqttBaseTopic))
-    await loadInstances(response.instance.id)
+    const saved = response.instance
+    setCurrentId(saved.id)
+    setEditor(editorFromInstance(saved, mqttBaseTopic))
+    await loadInstancesList()
+    if (routeInstanceId !== saved.id) {
+      navigate(instanceConfigUrl(saved.id), { replace: true })
+    }
     if (!silent) {
       showNote("Configurazione salvata.")
     }
-    return response.instance
+    return saved
   }
 
   async function publishCurrent() {
@@ -595,19 +803,19 @@ export function ConfigPage() {
       if (response.instance) {
         setCurrentId(response.instance.id)
         setEditor(editorFromInstance(response.instance, mqttBaseTopic))
-        await loadInstances(response.instance.id)
+        await loadInstancesList()
       }
       const autoconfig = response.autoconfig && typeof response.autoconfig === "object" ? response.autoconfig : null
-      const isMini = normalizeDeviceType(saved.deviceType) === "sheltr_mini"
+      const isMiniDevice = normalizeDeviceType(saved.deviceType) === "sheltr_mini"
       if (autoconfig?.ok) {
         showNote(
-          isMini
+          isMiniDevice
             ? `Sheltr Mini sincronizzato da '${autoconfig.topic || response.topic}'. Rilevati ${autoconfig.devicesCount || 0} dispositivi.`
-            : `Configurazione pubblicata su '${response.topic}'. Autoconfigurazione completata: ${autoconfig.devicesCount || 0} dispositivi rilevati.`
+            : `Configurazione pubblicata su '${response.topic}'.`
         )
         return
       }
-      if (isMini) {
+      if (isMiniDevice) {
         showNote(
           `Sheltr Mini non sincronizzato da '${autoconfig?.topic || response.topic}': ${cleanText(autoconfig?.error, "nessun payload dispositivi ricevuto")}.`,
           true
@@ -634,10 +842,11 @@ export function ConfigPage() {
         method: "DELETE",
         tokenConfig: configTokenConfig(configToken),
       })
-      showNote(`Istanza '${currentId}' eliminata.`)
+      await loadInstancesList()
       setEditor(null)
       setCurrentId("")
-      await loadInstances("")
+      showNote(`Istanza '${currentId}' eliminata.`)
+      navigate("/config")
     } catch (caught) {
       if (!handleConfigAuthError(caught)) {
         showNote(caught instanceof Error ? caught.message : "Eliminazione non riuscita", true)
@@ -664,11 +873,10 @@ export function ConfigPage() {
       }
       setConfigPass("")
       const baseTopicValue = await loadConfigMeta(token)
-      await loadInstances(
-        slugify(params.instanceId || forcedInstanceFromLocation(location.pathname, location.search), ""),
-        token,
-        baseTopicValue
-      )
+      await loadInstancesList(token)
+      if (routeInstanceId) {
+        await loadInstance(routeInstanceId, token, baseTopicValue)
+      }
       showNote("Login configurazione eseguito.")
     } catch (caught) {
       if (!handleConfigAuthError(caught)) {
@@ -691,6 +899,7 @@ export function ConfigPage() {
     setInstances([])
     setEditor(null)
     setCurrentId("")
+    navigate("/config", { replace: true })
     showNote("Logout configurazione eseguito.")
   }
 
@@ -701,12 +910,23 @@ export function ConfigPage() {
   const configAllowed = !configAuthRequired || Boolean(configToken)
   const isMini = editor?.deviceType === "sheltr_mini"
   const deviceHint = editor ? transportHint(editor, mqttBaseTopic, deviceTypes) : ""
+  const transport = editor ? transportFromEditor(editor, mqttBaseTopic) : null
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
+  const totalInstances = instances.length
+  const protectedInstances = instances.filter((instance) => instance.authRequired).length
+  const miniInstances = instances.filter((instance) => normalizeDeviceType(instance.deviceType) === "sheltr_mini").length
+  const dr154Instances = totalInstances - miniInstances
+  const pageTitle = listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
+  const pageDescription = listView
+    ? "Elenco completo delle istanze Sheltr Cloud. Apri Config per entrare nell’editor della singola istanza."
+    : editor
+      ? "Modifica i dati principali dell’istanza, salva e poi pubblica o sincronizza il dispositivo."
+      : "Caricamento configurazione istanza in corso."
 
   return (
     <AppShell
       title="Configurazione"
-      description="Crea e modifica le istanze Sheltr Cloud con preset dispositivo, autenticazione dedicata e publish/sync verso i moduli registrati."
+      description="Console amministrativa per creare istanze, aprire l’editor dedicato e pubblicare la configurazione dei moduli Sheltr."
       actions={
         configAuthRequired && configAllowed ? (
           <Button variant="outline" size="sm" className="rounded-full" onClick={configLogout}>
@@ -745,382 +965,498 @@ export function ConfigPage() {
           </CardContent>
         </Card>
       ) : (
-        <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <div className="space-y-6">
-            <Card className="border-border/80 bg-background/90">
-              <CardHeader>
-                <CardTitle>Istanze</CardTitle>
-                <CardDescription>Crea una nuova istanza e apri subito il link controllo dedicato.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="space-y-4" onSubmit={createInstance}>
-                  <div className="space-y-2">
-                    <Label>ID istanza</Label>
-                    <Input value={newId} onChange={(event) => setNewId(event.target.value)} placeholder="es. casa-demo" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Nome istanza</Label>
-                    <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="es. Casa Demo" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Tipo dispositivo</Label>
-                    <Select value={newDeviceType} onValueChange={(value) => setNewDeviceType(normalizeDeviceType(value))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(deviceTypes).map(([value, meta]) => (
-                          <SelectItem key={value} value={value}>
-                            {cleanText(meta.label, value)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button type="submit" className="w-full">
-                    <Plus className="size-4" />
-                    Crea istanza
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/80 bg-background/90">
-              <CardHeader>
-                <CardTitle>Istanze esistenti</CardTitle>
-                <CardDescription>
-                  {currentId ? `Istanza selezionata: ${currentId}` : "Seleziona una istanza per aprire l’editor."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="max-h-[40rem] pr-4">
-                  <div className="space-y-3">
-                    {!instances.length && !loading ? (
-                      <p className="text-sm text-muted-foreground">Nessuna istanza.</p>
-                    ) : null}
-                    {instances.map((instance) => {
-                      const fullUrl = `${window.location.origin}${instance.controlUrl || controlUrl(instance.id)}`
-                      const active = instance.id === currentId
-                      return (
-                        <Card key={instance.id} className="border-border/70 shadow-none">
-                          <CardContent className="space-y-4 p-4">
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-semibold">{instance.name}</h3>
-                                {active ? <Badge>Selezionata</Badge> : null}
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                {instance.id} •{" "}
-                                {cleanText(instance.deviceLabel, deviceTypes[instance.deviceType]?.label || instance.deviceType)} •{" "}
-                                {instance.deviceType === "sheltr_mini" ? "autoconfigurazione" : `${instance.boardsCount} schede`}
-                                {instance.authRequired ? " • login" : ""}
-                              </p>
-                              {instance.updatedAt ? (
-                                <p className="text-xs text-muted-foreground">Aggiornata: {formatUpdatedAt(instance.updatedAt)}</p>
-                              ) : null}
-                            </div>
-                            <div className="rounded-2xl border bg-muted/30 p-3 text-xs text-muted-foreground">
-                              <p className="truncate">{fullUrl}</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                variant={active ? "secondary" : "outline"}
-                                size="sm"
-                                onClick={() => {
-                                  void loadInstance(instance.id).catch((caught) => {
-                                    if (!handleConfigAuthError(caught)) {
-                                      showNote(caught instanceof Error ? caught.message : "Caricamento istanza non riuscito", true)
-                                    }
-                                  })
-                                }}
-                                disabled={active}
-                              >
-                                {active ? "Selezionata" : "Seleziona"}
-                              </Button>
-                              <Button asChild variant="ghost" size="sm">
-                                <a href={instance.controlUrl || controlUrl(instance.id)} target="_blank" rel="noreferrer">
-                                  <ExternalLink className="size-4" />
-                                  Apri
-                                </a>
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  void copyText(fullUrl).then((ok) => {
-                                    showNote(ok ? `Link copiato: ${fullUrl}` : "Copia non riuscita", !ok)
-                                  })
-                                }}
-                              >
-                                <Copy className="size-4" />
-                                Copia
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )
-                    })}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-6">
-            <Card className="border-border/80 bg-background/90">
-              <CardHeader>
-                <CardTitle>{editor ? `Istanza: ${editor.name}` : "Editor istanza"}</CardTitle>
-                <CardDescription>
-                  {editor ? "Modifica i parametri dell’istanza e salva prima di pubblicare o sincronizzare." : "Crea o seleziona una istanza."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {!editor ? (
-                  <p className="text-sm text-muted-foreground">Crea o seleziona una istanza per iniziare.</p>
-                ) : (
-                  <>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label>ID istanza</Label>
-                        <Input
-                          value={editor.id}
-                          onChange={(event) => {
-                            const next = { ...editor, id: slugify(event.target.value, editor.id || "dr154-1") }
-                            updateEditor(applyDerivedTransport(next, mqttBaseTopic))
-                          }}
-                        />
+        <>
+          <section className="overflow-hidden rounded-[2rem] border bg-background/95 shadow-sm">
+            <div className="grid min-h-[72vh] lg:grid-cols-[280px_minmax(0,1fr)]">
+              <aside className="border-b bg-muted/20 p-5 lg:border-b-0 lg:border-r lg:p-6">
+                <div className="space-y-6">
+                  <div className="rounded-3xl border bg-background p-4 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-11 items-center justify-center rounded-2xl border bg-muted/60">
+                        <img src="/static/logo.svg" alt="Sheltr" className="size-6" />
                       </div>
-                      <div className="space-y-2">
-                        <Label>Nome istanza</Label>
-                        <Input value={editor.name} onChange={(event) => updateEditor({ ...editor, name: event.target.value })} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Tipo dispositivo</Label>
-                        <Select
-                          value={editor.deviceType}
-                          onValueChange={(value) => {
-                            const nextType = normalizeDeviceType(value)
-                            if (nextType === editor.deviceType) {
-                              return
-                            }
-                            const label = cleanText(deviceTypes[nextType]?.label, nextType)
-                            const ok = window.confirm(
-                              `Applicare il preset '${label}'? Verranno aggiornati topic MQTT, formato payload e schede dell'istanza corrente.`
-                            )
-                            if (!ok) {
-                              return
-                            }
-                            updateEditor(applyDevicePreset(editor, nextType, mqttBaseTopic))
-                            showNote(`Preset '${label}' applicato. Controlla nomi canali e stanze prima di salvare.`)
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(deviceTypes).map(([value, meta]) => (
-                              <SelectItem key={value} value={value}>
-                                {cleanText(meta.label, value)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Versione protocollo</Label>
-                        <Input value="1.6" readOnly />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{isMini ? "Dispositivi" : "Schede"}</Label>
-                        <Input
-                          readOnly
-                          value={
-                            isMini
-                              ? associatedDevices.length
-                                ? `AUTO (${associatedDevices.length} dispositivi)`
-                                : "AUTO"
-                              : String(editor.boards.length)
-                          }
-                        />
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
+                          Sheltr Cloud
+                        </p>
+                        <h2 className="text-lg font-semibold">Config Console</h2>
                       </div>
                     </div>
+                  </div>
 
-                    <Alert>
-                      <AlertTitle>{cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}</AlertTitle>
-                      <AlertDescription>{deviceHint}</AlertDescription>
-                    </Alert>
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      variant={createOpen ? "secondary" : "ghost"}
+                      className="w-full justify-start rounded-2xl"
+                      onClick={() => setCreateOpen(true)}
+                    >
+                      <Plus className="size-4" />
+                      Aggiungi istanza
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={listView ? "secondary" : "ghost"}
+                      className="w-full justify-start rounded-2xl"
+                      onClick={() => navigate("/config")}
+                    >
+                      <LayoutList className="size-4" />
+                      Istanze
+                    </Button>
+                  </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label>Username login controllo</Label>
-                        <Input
-                          value={editor.auth.username}
-                          onChange={(event) =>
-                            updateEditor({ ...editor, auth: { ...editor.auth, username: event.target.value } })
-                          }
-                          placeholder="es. filippo"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Password login controllo</Label>
-                        <Input
-                          value={editor.auth.password}
-                          onChange={(event) =>
-                            updateEditor({ ...editor, auth: { ...editor.auth, password: event.target.value } })
-                          }
-                          placeholder="Visibile: nuova password o vuoto"
-                        />
-                      </div>
-                      <div className="flex items-end">
-                        <div className="flex w-full items-center justify-between rounded-2xl border p-4">
-                          <div className="space-y-1">
-                            <Label>Rimuovi password controllo</Label>
-                            <p className="text-sm text-muted-foreground">Cancella la password salvata per questa istanza.</p>
-                          </div>
-                          <Switch
-                            checked={editor.auth.clearPassword}
-                            onCheckedChange={(checked) =>
-                              updateEditor({ ...editor, auth: { ...editor.auth, clearPassword: checked } })
-                            }
-                          />
+                  <Separator />
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                    <Card className="shadow-none">
+                      <CardContent className="p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Totale</p>
+                        <p className="mt-2 text-2xl font-semibold">{totalInstances}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">istanze registrate</p>
+                      </CardContent>
+                    </Card>
+                    <Card className="shadow-none">
+                      <CardContent className="p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Protette</p>
+                        <p className="mt-2 text-2xl font-semibold">{protectedInstances}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">con login controllo</p>
+                      </CardContent>
+                    </Card>
+                    <Card className="shadow-none">
+                      <CardContent className="p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Profili</p>
+                        <p className="mt-2 text-2xl font-semibold">{dr154Instances}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">DR154 • {miniInstances} Mini</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {editor ? (
+                    <Card className="shadow-none">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base">Istanza attiva</CardTitle>
+                        <CardDescription>{editor.id}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline">
+                            {cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}
+                          </Badge>
+                          <Badge variant="outline">
+                            {isMini ? `AUTO (${associatedDevices.length})` : `${editor.boards.length} schede`}
+                          </Badge>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      {deviceUsesManualBoards(editor.deviceType) ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() =>
-                            updateEditor({
-                              ...editor,
-                              boards: [...editor.boards, normalizeBoard({}, editor.boards.length)],
-                            })
-                          }
-                        >
-                          <Plus className="size-4" />
-                          Aggiungi scheda
+                        <Button asChild variant="outline" className="w-full">
+                          <Link to={controlUrl(editor.id)}>Apri controllo</Link>
                         </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          void saveCurrent(false).catch((caught) => {
-                            if (!handleConfigAuthError(caught)) {
-                              showNote(caught instanceof Error ? caught.message : "Salvataggio non riuscito", true)
-                            }
-                          })
-                        }}
-                      >
-                        <Save className="size-4" />
-                        Salva
-                      </Button>
-                      <Button type="button" variant="outline" onClick={publishCurrent}>
-                        <RefreshCw className="size-4" />
-                        {isMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT"}
-                      </Button>
-                      <Button type="button" variant="destructive" onClick={deleteCurrent}>
-                        <Trash2 className="size-4" />
-                        Elimina istanza
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            {editor ? (
-              isMini ? (
-                <Card className="border-border/80 bg-background/90">
-                  <CardHeader>
-                    <CardTitle>Dispositivi autoconfigurati</CardTitle>
-                    <CardDescription>
-                      Sheltr Mini deriva topic e payload dall’ID istanza e mostra qui solo i dispositivi rilevati dal modulo.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {associatedDevices.length ? (
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {associatedDevices.map((device) => (
-                          <Card key={device.id} className="border-border/70 shadow-none">
-                            <CardContent className="space-y-3 p-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="font-semibold">{device.name}</h3>
-                                <Badge variant="outline">{KIND_META[device.kind]?.label ?? device.kind}</Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                {device.room} • {device.boardName} • C{device.channel}
-                              </p>
-                              {device.sourceId ? <p className="text-xs text-muted-foreground">Source: {device.sourceId}</p> : null}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : (
-                      <Alert>
-                        <AlertTitle>Nessun dispositivo sincronizzato</AlertTitle>
-                        <AlertDescription>
-                          Salva l’istanza, poi usa “Sincronizza Sheltr Mini” per leggere il retained cloud su `{editor.id}/config`.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="space-y-4">
-                  {editor.boards.length ? (
-                    editor.boards.map((board, boardIndex) => (
-                      <BoardEditor
-                        key={`${board.id}-${boardIndex}`}
-                        board={board}
-                        boardIndex={boardIndex}
-                        onChange={(nextBoard) =>
-                          updateEditor({
-                            ...editor,
-                            boards: editor.boards.map((boardItem, index) =>
-                              index === boardIndex ? normalizeBoard(nextBoard, boardIndex) : boardItem
-                            ),
-                          })
-                        }
-                        onRemove={() =>
-                          updateEditor({
-                            ...editor,
-                            boards: editor.boards.filter((_, index) => index !== boardIndex),
-                          })
-                        }
-                      />
-                    ))
+                      </CardContent>
+                    </Card>
                   ) : (
-                    <Card className="border-border/80 bg-background/90">
-                      <CardContent className="p-6 text-sm text-muted-foreground">Nessuna scheda configurata.</CardContent>
+                    <Card className="shadow-none">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base">Vista principale</CardTitle>
+                        <CardDescription>Da qui apri la lista completa e poi entri nella config della singola istanza.</CardDescription>
+                      </CardHeader>
                     </Card>
                   )}
                 </div>
-              )
-            ) : null}
-          </div>
-        </section>
+              </aside>
+
+              <div className="min-w-0">
+                <header className="flex flex-col gap-4 border-b px-5 py-4 md:px-6 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
+                      Configurazione / {listView ? "Istanze" : pageTitle}
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-semibold tracking-tight">{pageTitle}</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">{pageDescription}</p>
+                    </div>
+                  </div>
+
+                  <nav className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
+                      <Plus className="size-4" />
+                      Aggiungi istanza
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={listView ? "secondary" : "outline"}
+                      className="rounded-full"
+                      onClick={() => navigate("/config")}
+                    >
+                      <LayoutList className="size-4" />
+                      Istanze
+                    </Button>
+                  </nav>
+                </header>
+
+                <div className="space-y-6 p-5 md:p-6">
+                  {note.text ? (
+                    <Alert variant={note.error ? "destructive" : "default"}>
+                      <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
+                      <AlertDescription>{note.text}</AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {loading ? <p className="text-sm text-muted-foreground">Caricamento configurazione in corso...</p> : null}
+
+                  {!loading && listView ? (
+                    <>
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <Card className="shadow-none">
+                          <CardContent className="p-5">
+                            <p className="text-sm text-muted-foreground">Totale istanze</p>
+                            <p className="mt-2 text-3xl font-semibold">{totalInstances}</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="shadow-none">
+                          <CardContent className="p-5">
+                            <p className="text-sm text-muted-foreground">Sheltr 4G / DR154</p>
+                            <p className="mt-2 text-3xl font-semibold">{dr154Instances}</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="shadow-none">
+                          <CardContent className="p-5">
+                            <p className="text-sm text-muted-foreground">Sheltr Mini</p>
+                            <p className="mt-2 text-3xl font-semibold">{miniInstances}</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      <Card className="border-border/80 bg-background/90">
+                        <CardHeader>
+                          <CardTitle>Tutte le istanze</CardTitle>
+                          <CardDescription>
+                            Il pulsante “Config” apre la configurazione dedicata della singola istanza.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <InstancesTable
+                            instances={instances}
+                            currentId={currentId}
+                            deviceTypes={deviceTypes}
+                            onCopy={(value) => {
+                              void copyText(value)
+                            }}
+                          />
+                        </CardContent>
+                      </Card>
+                    </>
+                  ) : null}
+
+                  {!loading && !listView && !editor ? (
+                    <Card className="border-border/80 bg-background/90">
+                      <CardContent className="p-6 text-sm text-muted-foreground">
+                        Impossibile caricare la configurazione dell’istanza richiesta.
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  {!loading && editor ? (
+                    <>
+                      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_360px]">
+                        <Card className="border-border/80 bg-background/90">
+                          <CardHeader>
+                            <CardTitle>Dati istanza</CardTitle>
+                            <CardDescription>
+                              Modifica le informazioni principali. I topic MQTT restano sempre derivati dall’ID istanza.
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-6">
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>ID istanza</Label>
+                                <Input
+                                  value={editor.id}
+                                  onChange={(event) => {
+                                    const next = { ...editor, id: slugify(event.target.value, editor.id || "dr154-1") }
+                                    updateEditor(applyDerivedTransport(next, mqttBaseTopic))
+                                  }}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Nome istanza</Label>
+                                <Input value={editor.name} onChange={(event) => updateEditor({ ...editor, name: event.target.value })} />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Tipo dispositivo</Label>
+                                <Select
+                                  value={editor.deviceType}
+                                  onValueChange={(value) => {
+                                    const nextType = normalizeDeviceType(value)
+                                    if (nextType === editor.deviceType) {
+                                      return
+                                    }
+                                    const label = cleanText(deviceTypes[nextType]?.label, nextType)
+                                    const ok = window.confirm(
+                                      `Applicare il preset '${label}'? Verranno aggiornati topic MQTT, formato payload e schede dell'istanza corrente.`
+                                    )
+                                    if (!ok) {
+                                      return
+                                    }
+                                    updateEditor(applyDevicePreset(editor, nextType, mqttBaseTopic))
+                                    showNote(`Preset '${label}' applicato. Controlla nomi canali e stanze prima di salvare.`)
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Object.entries(deviceTypes).map(([value, meta]) => (
+                                      <SelectItem key={value} value={value}>
+                                        {cleanText(meta.label, value)}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Versione protocollo</Label>
+                                <Input value="1.6" readOnly />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>{isMini ? "Dispositivi rilevati" : "Schede configurate"}</Label>
+                                <Input
+                                  readOnly
+                                  value={
+                                    isMini
+                                      ? associatedDevices.length
+                                        ? `AUTO (${associatedDevices.length})`
+                                        : "AUTO"
+                                      : String(editor.boards.length)
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <Alert>
+                              <AlertTitle>{cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}</AlertTitle>
+                              <AlertDescription>{deviceHint}</AlertDescription>
+                            </Alert>
+                          </CardContent>
+                        </Card>
+
+                        <div className="space-y-6">
+                          <Card className="border-border/80 bg-background/90">
+                            <CardHeader>
+                              <CardTitle>Trasporto</CardTitle>
+                              <CardDescription>Riepilogo read-only dei topic MQTT derivati e del formato payload.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="grid gap-3">
+                              <div className="rounded-2xl border p-4">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Config</p>
+                                <p className="mt-2 break-all font-mono text-sm">{transport?.configTopic || "-"}</p>
+                              </div>
+                              <div className="rounded-2xl border p-4">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Comandi</p>
+                                <p className="mt-2 break-all font-mono text-sm">{transport?.lightCommandTopic || "-"}</p>
+                              </div>
+                              <div className="rounded-2xl border p-4">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Risposta</p>
+                                <p className="mt-2 break-all font-mono text-sm">{transport?.lightResponseTopic || "-"}</p>
+                              </div>
+                              <div className="rounded-2xl border p-4">
+                                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Payload</p>
+                                <p className="mt-2 font-mono text-sm">
+                                  {cleanText(deviceTypes[editor.deviceType]?.defaultPayloadFormat, "frame_hex_space_crlf")}
+                                </p>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="border-border/80 bg-background/90">
+                            <CardHeader>
+                              <CardTitle>Accesso controllo</CardTitle>
+                              <CardDescription>Credenziali usate dalla pagina di controllo della singola istanza.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <div className="space-y-2">
+                                <Label>Username login controllo</Label>
+                                <Input
+                                  value={editor.auth.username}
+                                  onChange={(event) =>
+                                    updateEditor({ ...editor, auth: { ...editor.auth, username: event.target.value } })
+                                  }
+                                  placeholder="es. filippo"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Password login controllo</Label>
+                                <Input
+                                  value={editor.auth.password}
+                                  onChange={(event) =>
+                                    updateEditor({ ...editor, auth: { ...editor.auth, password: event.target.value } })
+                                  }
+                                  placeholder="Visibile: nuova password o vuoto"
+                                />
+                              </div>
+                              <div className="flex items-center justify-between rounded-2xl border p-4">
+                                <div className="space-y-1">
+                                  <Label>Rimuovi password</Label>
+                                  <p className="text-sm text-muted-foreground">Cancella la password salvata per questa istanza.</p>
+                                </div>
+                                <Switch
+                                  checked={editor.auth.clearPassword}
+                                  onCheckedChange={(checked) =>
+                                    updateEditor({ ...editor, auth: { ...editor.auth, clearPassword: checked } })
+                                  }
+                                />
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="border-border/80 bg-background/90">
+                            <CardHeader>
+                              <CardTitle>Azioni</CardTitle>
+                              <CardDescription>Salva prima la configurazione, poi pubblica o sincronizza il dispositivo.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                              <Button
+                                type="button"
+                                className="w-full"
+                                onClick={() => {
+                                  void saveCurrent(false).catch((caught) => {
+                                    if (!handleConfigAuthError(caught)) {
+                                      showNote(caught instanceof Error ? caught.message : "Salvataggio non riuscito", true)
+                                    }
+                                  })
+                                }}
+                              >
+                                <Save className="size-4" />
+                                Salva
+                              </Button>
+                              <Button type="button" variant="outline" className="w-full" onClick={publishCurrent}>
+                                <RefreshCw className="size-4" />
+                                {isMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT"}
+                              </Button>
+                              <Button type="button" variant="destructive" className="w-full" onClick={deleteCurrent}>
+                                <Trash2 className="size-4" />
+                                Elimina istanza
+                              </Button>
+                              <Separator />
+                              <Button asChild variant="outline" className="w-full">
+                                <Link to={controlUrl(editor.id)}>Apri controllo</Link>
+                              </Button>
+                              <Button type="button" variant="ghost" className="w-full" onClick={() => void copyText(fullControlUrl(editor.id))}>
+                                <Copy className="size-4" />
+                                Copia link controllo
+                              </Button>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      </div>
+
+                      {isMini ? (
+                        <Card className="border-border/80 bg-background/90">
+                          <CardHeader>
+                            <CardTitle>Dispositivi autoconfigurati</CardTitle>
+                            <CardDescription>
+                              Sheltr Mini mostra qui solo i dispositivi rilevati dal modulo tramite sincronizzazione cloud.
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {associatedDevices.length ? (
+                              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                {associatedDevices.map((device) => (
+                                  <Card key={device.id} className="border-border/70 shadow-none">
+                                    <CardContent className="space-y-3 p-4">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h3 className="font-semibold">{device.name}</h3>
+                                        <Badge variant="outline">{KIND_META[device.kind]?.label ?? device.kind}</Badge>
+                                      </div>
+                                      <p className="text-sm text-muted-foreground">
+                                        {device.room} • {device.boardName} • C{device.channel}
+                                      </p>
+                                      {device.sourceId ? <p className="text-xs text-muted-foreground">Source: {device.sourceId}</p> : null}
+                                    </CardContent>
+                                  </Card>
+                                ))}
+                              </div>
+                            ) : (
+                              <Alert>
+                                <AlertTitle>Nessun dispositivo sincronizzato</AlertTitle>
+                                <AlertDescription>
+                                  Salva l’istanza, poi usa “Sincronizza Sheltr Mini” per leggere il retained cloud su `{editor.id}/config`.
+                                </AlertDescription>
+                              </Alert>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        <section className="space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-semibold">Schede</h3>
+                              <p className="text-sm text-muted-foreground">
+                                Configura indirizzo, tipo, canali e stanze di ogni scheda associata all’istanza.
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                updateEditor({
+                                  ...editor,
+                                  boards: [...editor.boards, normalizeBoard({}, editor.boards.length)],
+                                })
+                              }
+                            >
+                              <Plus className="size-4" />
+                              Aggiungi scheda
+                            </Button>
+                          </div>
+
+                          {editor.boards.length ? (
+                            editor.boards.map((board, boardIndex) => (
+                              <BoardEditor
+                                key={`${board.id}-${boardIndex}`}
+                                board={board}
+                                boardIndex={boardIndex}
+                                onChange={(nextBoard) =>
+                                  updateEditor({
+                                    ...editor,
+                                    boards: editor.boards.map((boardItem, index) =>
+                                      index === boardIndex ? normalizeBoard(nextBoard, boardIndex) : boardItem
+                                    ),
+                                  })
+                                }
+                                onRemove={() =>
+                                  updateEditor({
+                                    ...editor,
+                                    boards: editor.boards.filter((_, index) => index !== boardIndex),
+                                  })
+                                }
+                              />
+                            ))
+                          ) : (
+                            <Card className="border-border/80 bg-background/90">
+                              <CardContent className="p-6 text-sm text-muted-foreground">Nessuna scheda configurata.</CardContent>
+                            </Card>
+                          )}
+                        </section>
+                      )}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <CreateInstanceDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            newId={newId}
+            setNewId={setNewId}
+            newName={newName}
+            setNewName={setNewName}
+            newDeviceType={newDeviceType}
+            setNewDeviceType={setNewDeviceType}
+            deviceTypes={deviceTypes}
+            onSubmit={createInstance}
+          />
+        </>
       )}
-
-      {note.text ? (
-        <Alert variant={note.error ? "destructive" : "default"}>
-          <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
-          <AlertDescription>{note.text}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {loading ? <p className="text-sm text-muted-foreground">Caricamento configurazione in corso...</p> : null}
-
-      {editor ? (
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to={controlUrl(editor.id)}>Apri pagina controllo</Link>
-          </Button>
-        </div>
-      ) : null}
     </AppShell>
   )
 }
