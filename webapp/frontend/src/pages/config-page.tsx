@@ -1,6 +1,6 @@
-import { type FormEvent, useEffect, useState } from "react"
+import { type CSSProperties, type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { Copy, ExternalLink, LayoutList, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, LayoutList, LogOut, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -25,6 +25,21 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
 import { Switch } from "@/components/ui/switch"
 import { apiJson, ApiError, configTokenConfig } from "@/lib/api"
 import {
@@ -519,7 +534,7 @@ function InstancesTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border">
+    <div className="overflow-x-auto border-y bg-background">
       <table className="min-w-full text-sm">
         <thead className="bg-muted/40 text-left text-muted-foreground">
           <tr className="border-b">
@@ -912,10 +927,6 @@ export function ConfigPage() {
   const deviceHint = editor ? transportHint(editor, mqttBaseTopic, deviceTypes) : ""
   const transport = editor ? transportFromEditor(editor, mqttBaseTopic) : null
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
-  const totalInstances = instances.length
-  const protectedInstances = instances.filter((instance) => instance.authRequired).length
-  const miniInstances = instances.filter((instance) => normalizeDeviceType(instance.deviceType) === "sheltr_mini").length
-  const dr154Instances = totalInstances - miniInstances
   const pageTitle = listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
   const pageDescription = listView
     ? "Elenco completo delle istanze Sheltr Cloud. Apri Config per entrare nell’editor della singola istanza."
@@ -927,13 +938,9 @@ export function ConfigPage() {
     <AppShell
       title="Configurazione"
       description="Console amministrativa per creare istanze, aprire l’editor dedicato e pubblicare la configurazione dei moduli Sheltr."
-      actions={
-        configAuthRequired && configAllowed ? (
-          <Button variant="outline" size="sm" className="rounded-full" onClick={configLogout}>
-            Logout config
-          </Button>
-        ) : null
-      }
+      variant="full"
+      showHeader={false}
+      showFooter={false}
     >
       {!configAllowed ? (
         <Card className="mx-auto w-full max-w-xl border-border/80 bg-background/90">
@@ -966,118 +973,115 @@ export function ConfigPage() {
         </Card>
       ) : (
         <>
-          <section className="overflow-hidden rounded-[2rem] border bg-background/95 shadow-sm">
-            <div className="grid min-h-[72vh] lg:grid-cols-[280px_minmax(0,1fr)]">
-              <aside className="border-b bg-muted/20 p-5 lg:border-b-0 lg:border-r lg:p-6">
-                <div className="space-y-6">
-                  <div className="rounded-3xl border bg-background p-4 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-11 items-center justify-center rounded-2xl border bg-muted/60">
-                        <img src="/static/logo.svg" alt="Sheltr" className="size-6" />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                          Sheltr Cloud
-                        </p>
-                        <h2 className="text-lg font-semibold">Config Console</h2>
-                      </div>
-                    </div>
+          <SidebarProvider
+            defaultOpen
+            style={
+              {
+                "--sidebar-width": "17rem",
+                "--sidebar-width-mobile": "18rem",
+                "--sidebar-width-icon": "4rem",
+              } as CSSProperties
+            }
+          >
+            <Sidebar collapsible="icon">
+              <SidebarHeader className="border-b border-sidebar-border p-3">
+                <div className="flex items-center gap-3 overflow-hidden rounded-xl px-2 py-1">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-sidebar-border bg-sidebar-accent">
+                    <img src="/static/logo.svg" alt="Sheltr" className="size-5" />
                   </div>
-
-                  <div className="space-y-2">
-                    <Button
-                      type="button"
-                      variant={createOpen ? "secondary" : "ghost"}
-                      className="w-full justify-start rounded-2xl"
-                      onClick={() => setCreateOpen(true)}
-                    >
-                      <Plus className="size-4" />
-                      Aggiungi istanza
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={listView ? "secondary" : "ghost"}
-                      className="w-full justify-start rounded-2xl"
-                      onClick={() => navigate("/config")}
-                    >
-                      <LayoutList className="size-4" />
-                      Istanze
-                    </Button>
+                  <div className="min-w-0 group-data-[collapsible=icon]:hidden">
+                    <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
+                    <p className="truncate text-sm font-semibold text-sidebar-foreground">Config Console</p>
                   </div>
-
-                  <Separator />
-
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                    <Card className="shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Totale</p>
-                        <p className="mt-2 text-2xl font-semibold">{totalInstances}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">istanze registrate</p>
-                      </CardContent>
-                    </Card>
-                    <Card className="shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Protette</p>
-                        <p className="mt-2 text-2xl font-semibold">{protectedInstances}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">con login controllo</p>
-                      </CardContent>
-                    </Card>
-                    <Card className="shadow-none">
-                      <CardContent className="p-4">
-                        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Profili</p>
-                        <p className="mt-2 text-2xl font-semibold">{dr154Instances}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">DR154 • {miniInstances} Mini</p>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {editor ? (
-                    <Card className="shadow-none">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-base">Istanza attiva</CardTitle>
-                        <CardDescription>{editor.id}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant="outline">
-                            {cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}
-                          </Badge>
-                          <Badge variant="outline">
-                            {isMini ? `AUTO (${associatedDevices.length})` : `${editor.boards.length} schede`}
-                          </Badge>
-                        </div>
-                        <Button asChild variant="outline" className="w-full">
-                          <Link to={controlUrl(editor.id)}>Apri controllo</Link>
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <Card className="shadow-none">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-base">Vista principale</CardTitle>
-                        <CardDescription>Da qui apri la lista completa e poi entri nella config della singola istanza.</CardDescription>
-                      </CardHeader>
-                    </Card>
-                  )}
                 </div>
-              </aside>
+              </SidebarHeader>
 
-              <div className="min-w-0">
-                <header className="flex flex-col gap-4 border-b px-5 py-4 md:px-6 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                      Configurazione / {listView ? "Istanze" : pageTitle}
+              <SidebarContent>
+                <SidebarGroup>
+                  <SidebarGroupLabel>Navigazione</SidebarGroupLabel>
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton type="button" isActive={createOpen} onClick={() => setCreateOpen(true)}>
+                          <Plus />
+                          <span>Aggiungi istanza</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton type="button" isActive={listView} onClick={() => navigate("/config")}>
+                          <LayoutList />
+                          <span>Istanze</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </SidebarGroup>
+
+                <SidebarGroup>
+                  <SidebarGroupLabel>Contesto</SidebarGroupLabel>
+                  <SidebarGroupContent>
+                    <div className="space-y-3 px-2 group-data-[collapsible=icon]:hidden">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-sidebar-foreground">Vista corrente</p>
+                        <p className="text-sm leading-6 text-sidebar-foreground/70">{pageDescription}</p>
+                      </div>
+
+                      {editor ? (
+                        <div className="space-y-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/50 p-3">
+                          <div className="space-y-1">
+                            <p className="text-sm font-medium text-sidebar-foreground">{editor.name}</p>
+                            <p className="font-mono text-xs text-sidebar-foreground/60">{editor.id}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant="outline">{cleanText(deviceTypes[editor.deviceType]?.label, editor.deviceType)}</Badge>
+                            <Badge variant="outline">{isMini ? `AUTO (${associatedDevices.length})` : `${editor.boards.length} schede`}</Badge>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                    <div>
-                      <h2 className="text-2xl font-semibold tracking-tight">{pageTitle}</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">{pageDescription}</p>
+                  </SidebarGroupContent>
+                </SidebarGroup>
+              </SidebarContent>
+
+              <SidebarFooter className="border-t border-sidebar-border p-3">
+                <SidebarMenu>
+                  {configAuthRequired ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton type="button" onClick={configLogout}>
+                        <LogOut />
+                        <span>Logout config</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                  {editor ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild>
+                        <Link to={controlUrl(editor.id)}>
+                          <ExternalLink />
+                          <span>Apri controllo</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                </SidebarMenu>
+              </SidebarFooter>
+            </Sidebar>
+
+            <SidebarInset>
+              <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
+                <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-6">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <SidebarTrigger className="rounded-full" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{pageTitle}</p>
+                      <p className="hidden text-xs text-muted-foreground md:block">Configurazione istanze Sheltr Cloud</p>
                     </div>
                   </div>
 
-                  <nav className="flex flex-wrap gap-2">
+                  <nav className="flex flex-wrap items-center gap-2">
                     <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
                       <Plus className="size-4" />
-                      Aggiungi istanza
+                      <span className="hidden sm:inline">Aggiungi istanza</span>
                     </Button>
                     <Button
                       type="button"
@@ -1086,12 +1090,14 @@ export function ConfigPage() {
                       onClick={() => navigate("/config")}
                     >
                       <LayoutList className="size-4" />
-                      Istanze
+                      <span className="hidden sm:inline">Istanze</span>
                     </Button>
                   </nav>
-                </header>
+                </div>
+              </header>
 
-                <div className="space-y-6 p-5 md:p-6">
+              <div className="flex-1 px-4 py-6 md:px-6">
+                <div className="w-full space-y-6">
                   {note.text ? (
                     <Alert variant={note.error ? "destructive" : "default"}>
                       <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
@@ -1102,51 +1108,26 @@ export function ConfigPage() {
                   {loading ? <p className="text-sm text-muted-foreground">Caricamento configurazione in corso...</p> : null}
 
                   {!loading && listView ? (
-                    <>
-                      <div className="grid gap-4 md:grid-cols-3">
-                        <Card className="shadow-none">
-                          <CardContent className="p-5">
-                            <p className="text-sm text-muted-foreground">Totale istanze</p>
-                            <p className="mt-2 text-3xl font-semibold">{totalInstances}</p>
-                          </CardContent>
-                        </Card>
-                        <Card className="shadow-none">
-                          <CardContent className="p-5">
-                            <p className="text-sm text-muted-foreground">Sheltr 4G / DR154</p>
-                            <p className="mt-2 text-3xl font-semibold">{dr154Instances}</p>
-                          </CardContent>
-                        </Card>
-                        <Card className="shadow-none">
-                          <CardContent className="p-5">
-                            <p className="text-sm text-muted-foreground">Sheltr Mini</p>
-                            <p className="mt-2 text-3xl font-semibold">{miniInstances}</p>
-                          </CardContent>
-                        </Card>
+                    <section className="space-y-4">
+                      <div className="space-y-1">
+                        <h2 className="text-2xl font-semibold tracking-tight">Istanze</h2>
+                        <p className="text-sm text-muted-foreground">
+                          Il pulsante “Config” apre la configurazione dedicata della singola istanza.
+                        </p>
                       </div>
-
-                      <Card className="border-border/80 bg-background/90">
-                        <CardHeader>
-                          <CardTitle>Tutte le istanze</CardTitle>
-                          <CardDescription>
-                            Il pulsante “Config” apre la configurazione dedicata della singola istanza.
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <InstancesTable
-                            instances={instances}
-                            currentId={currentId}
-                            deviceTypes={deviceTypes}
-                            onCopy={(value) => {
-                              void copyText(value)
-                            }}
-                          />
-                        </CardContent>
-                      </Card>
-                    </>
+                      <InstancesTable
+                        instances={instances}
+                        currentId={currentId}
+                        deviceTypes={deviceTypes}
+                        onCopy={(value) => {
+                          void copyText(value)
+                        }}
+                      />
+                    </section>
                   ) : null}
 
                   {!loading && !listView && !editor ? (
-                    <Card className="border-border/80 bg-background/90">
+                    <Card className="border-border/80 bg-background/90 shadow-none">
                       <CardContent className="p-6 text-sm text-muted-foreground">
                         Impossibile caricare la configurazione dell’istanza richiesta.
                       </CardContent>
@@ -1440,8 +1421,8 @@ export function ConfigPage() {
                   ) : null}
                 </div>
               </div>
-            </div>
-          </section>
+            </SidebarInset>
+          </SidebarProvider>
 
           <CreateInstanceDialog
             open={createOpen}
