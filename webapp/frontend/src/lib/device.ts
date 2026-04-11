@@ -73,7 +73,7 @@ export const DEVICE_TYPE_META: Record<
     description: "Modulo DR154 con la configurazione attuale del portale.",
     module: "DR154",
     transport: "dr154_protocol_v1_6",
-    defaultPayloadFormat: "frame_hex_space_crlf",
+    defaultPayloadFormat: "frame_bytes",
     defaultBoard: {
       id: "board-1",
       name: "Scheda Luci",

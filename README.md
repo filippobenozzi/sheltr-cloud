@@ -60,7 +60,7 @@ MQTT_PASSWORD=filippo1994
      - `configTopic` = `/<istanza>/config`
      - `commandTopic` = `/<istanza>/cmd`
      - `responseTopic` = `/<istanza>/status`
-     - `payloadFormat` = `frame_hex_space_crlf`
+     - `payloadFormat` = `frame_bytes`
    - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo si sincronizza dai dispositivi pubblicati dal Mini sul topic retained `<istanza>/config`.
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
    - Questo passaggio vale per `Sheltr 4G / DR154`.
@@ -124,9 +124,9 @@ Formati payload supportati per i comandi dispositivo:
 
 - `frame_hex_space`: es. `49 01 51 41 00 00 00 00 00 00 00 00 00 46`
 - `frame_hex_compact`: es. `4901514100000000000000000046`
-- `frame_hex_space_crlf` (consigliato per DR154 transparent): come sopra + terminatore `\r\n`
+- `frame_hex_space_crlf`: come sopra + terminatore `\r\n`
 - `frame_hex_compact_crlf`: come sopra + terminatore `\r\n`
-- `frame_bytes`: invio bytes raw del frame protocollo
+- `frame_bytes`: invio bytes raw del frame protocollo (default per `Sheltr 4G / DR154`)
 - `json`: payload JSON applicativo
 
 ## Affidabilita comandi luce

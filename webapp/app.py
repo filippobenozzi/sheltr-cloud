@@ -125,7 +125,7 @@ DEVICE_TYPE_META = {
         "description": "Modulo DR154 con la configurazione attuale a frame protocollo 1.6.",
         "module": "DR154",
         "transport": "dr154_protocol_v1_6",
-        "defaultPayloadFormat": "frame_hex_space_crlf",
+        "defaultPayloadFormat": "frame_bytes",
         "supportsFramePolling": True,
         "defaultBoard": {
             "id": "board-1",
