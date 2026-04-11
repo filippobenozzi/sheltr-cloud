@@ -22,7 +22,6 @@ import { Switch } from "@/components/ui/switch"
 import { apiJson, ApiError, configTokenConfig } from "@/lib/api"
 import {
   associatedDevicesFromBoards,
-  cleanTopicPath,
   DEFAULT_DEVICE_TYPE,
   defaultBoardForDevice,
   defaultDeviceBaseTopic,
@@ -85,15 +84,6 @@ type ConfigPublishResponse = {
   } | null
 }
 
-const PAYLOAD_FORMAT_OPTIONS = [
-  { value: "frame_hex_space", label: "Frame HEX con spazi" },
-  { value: "frame_hex_compact", label: "Frame HEX compatto" },
-  { value: "frame_hex_space_crlf", label: "Frame HEX con spazi + CRLF" },
-  { value: "frame_hex_compact_crlf", label: "Frame HEX compatto + CRLF" },
-  { value: "frame_bytes", label: "Frame bytes raw" },
-  { value: "json", label: "JSON" },
-] as const
-
 function configTokenKey() {
   return "sheltr-config-token"
 }
@@ -129,11 +119,7 @@ function normalizeDeviceTypes(meta?: Record<string, DeviceTypePublic>) {
 function editorFromInstance(instance: InstancePublic, mqttBaseTopic: string): EditorInstance {
   const deviceType = normalizeDeviceType(instance.deviceType)
   const defaultBaseTopic = defaultDeviceBaseTopic(instance.id, deviceType, mqttBaseTopic)
-  const baseTopic =
-    deviceType === "sheltr_mini"
-      ? defaultBaseTopic
-      : cleanTopicPath(instance.mqtt?.baseTopic, defaultBaseTopic)
-  const derived = topicsFromBaseTopic(baseTopic, deviceType)
+  const derived = topicsFromBaseTopic(defaultBaseTopic, deviceType)
   const boards = deviceUsesManualBoards(deviceType)
     ? (Array.isArray(instance.boards) ? instance.boards : []).map((board, index) => normalizeBoard(board, index))
     : cloneValue(Array.isArray(instance.boards) ? instance.boards : [])
@@ -144,23 +130,11 @@ function editorFromInstance(instance: InstancePublic, mqttBaseTopic: string): Ed
     deviceType,
     protocolVersion: cleanText(instance.protocolVersion, "1.6"),
     mqtt: {
-      baseTopic,
-      configTopic:
-        deviceType === "sheltr_mini"
-          ? derived.configTopic
-          : cleanText(instance.mqtt?.configTopic, derived.configTopic),
-      lightCommandTopic:
-        deviceType === "sheltr_mini"
-          ? derived.lightCommandTopic
-          : cleanText(instance.mqtt?.lightCommandTopic, derived.lightCommandTopic),
-      lightResponseTopic:
-        deviceType === "sheltr_mini"
-          ? derived.lightResponseTopic
-          : cleanText(instance.mqtt?.lightResponseTopic, derived.lightResponseTopic),
-      lightPayloadFormat:
-        deviceType === "sheltr_mini"
-          ? cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf")
-          : cleanText(instance.mqtt?.lightPayloadFormat, "frame_hex_space_crlf"),
+      baseTopic: derived.baseTopic,
+      configTopic: derived.configTopic,
+      lightCommandTopic: derived.lightCommandTopic,
+      lightResponseTopic: derived.lightResponseTopic,
+      lightPayloadFormat: cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf"),
     },
     boards,
     auth: {
@@ -171,10 +145,7 @@ function editorFromInstance(instance: InstancePublic, mqttBaseTopic: string): Ed
   }
 }
 
-function applyMiniTransport(editor: EditorInstance, mqttBaseTopic: string) {
-  if (editor.deviceType !== "sheltr_mini") {
-    return editor
-  }
+function applyDerivedTransport(editor: EditorInstance, mqttBaseTopic: string) {
   const instanceId = slugify(editor.id, "dr154-1")
   const baseTopic = defaultDeviceBaseTopic(instanceId, editor.deviceType, mqttBaseTopic)
   const derived = topicsFromBaseTopic(baseTopic, editor.deviceType)
@@ -188,25 +159,6 @@ function applyMiniTransport(editor: EditorInstance, mqttBaseTopic: string) {
       lightCommandTopic: derived.lightCommandTopic,
       lightResponseTopic: derived.lightResponseTopic,
       lightPayloadFormat: cleanText(deviceTypeMeta(editor.deviceType).defaultPayloadFormat, "frame_hex_space_crlf"),
-    },
-  }
-}
-
-function applyBaseTopicTransport(editor: EditorInstance, mqttBaseTopic: string) {
-  if (editor.deviceType === "sheltr_mini") {
-    return applyMiniTransport(editor, mqttBaseTopic)
-  }
-  const instanceId = slugify(editor.id, "dr154-1")
-  const baseTopic = cleanTopicPath(editor.mqtt.baseTopic, defaultDeviceBaseTopic(instanceId, editor.deviceType, mqttBaseTopic))
-  const derived = topicsFromBaseTopic(baseTopic, editor.deviceType)
-  return {
-    ...editor,
-    mqtt: {
-      ...editor.mqtt,
-      baseTopic,
-      configTopic: derived.configTopic,
-      lightCommandTopic: derived.lightCommandTopic,
-      lightResponseTopic: derived.lightResponseTopic,
     },
   }
 }
@@ -235,11 +187,7 @@ function applyDevicePreset(editor: EditorInstance, nextType: DeviceType, mqttBas
 function payloadFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
   const currentId = slugify(editor.id, "dr154-1")
   const deviceType = normalizeDeviceType(editor.deviceType)
-  const baseTopic =
-    deviceType === "sheltr_mini"
-      ? defaultDeviceBaseTopic(currentId, deviceType, mqttBaseTopic)
-      : cleanTopicPath(editor.mqtt.baseTopic, defaultDeviceBaseTopic(currentId, deviceType, mqttBaseTopic))
-  const derived = topicsFromBaseTopic(baseTopic, deviceType)
+  const derived = topicsFromBaseTopic(defaultDeviceBaseTopic(currentId, deviceType, mqttBaseTopic), deviceType)
   const boards = deviceUsesManualBoards(deviceType)
     ? editor.boards.map((board, index) => normalizeBoard(board, index))
     : cloneValue(editor.boards)
@@ -250,21 +198,11 @@ function payloadFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
     deviceType,
     protocolVersion: "1.6",
     mqtt: {
-      baseTopic,
-      configTopic:
-        deviceType === "sheltr_mini" ? derived.configTopic : cleanText(editor.mqtt.configTopic, derived.configTopic),
-      lightCommandTopic:
-        deviceType === "sheltr_mini"
-          ? derived.lightCommandTopic
-          : cleanText(editor.mqtt.lightCommandTopic, derived.lightCommandTopic),
-      lightResponseTopic:
-        deviceType === "sheltr_mini"
-          ? derived.lightResponseTopic
-          : cleanText(editor.mqtt.lightResponseTopic, derived.lightResponseTopic),
-      lightPayloadFormat:
-        deviceType === "sheltr_mini"
-          ? cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf")
-          : cleanText(editor.mqtt.lightPayloadFormat, "frame_hex_space_crlf"),
+      baseTopic: derived.baseTopic,
+      configTopic: derived.configTopic,
+      lightCommandTopic: derived.lightCommandTopic,
+      lightResponseTopic: derived.lightResponseTopic,
+      lightPayloadFormat: cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf"),
     },
     auth: {
       username: cleanText(editor.auth.username, ""),
@@ -278,18 +216,14 @@ function payloadFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
 function transportHint(editor: EditorInstance, mqttBaseTopic: string, deviceTypes: Record<string, DeviceTypePublic>) {
   const deviceType = normalizeDeviceType(editor.deviceType)
   const meta = deviceTypes[deviceType] ?? deviceTypeMeta(deviceType)
-  const baseTopic =
-    deviceType === "sheltr_mini"
-      ? defaultDeviceBaseTopic(editor.id, deviceType, mqttBaseTopic)
-      : cleanTopicPath(editor.mqtt.baseTopic, defaultDeviceBaseTopic(editor.id, deviceType, mqttBaseTopic))
-  const derived = topicsFromBaseTopic(baseTopic, deviceType)
+  const derived = topicsFromBaseTopic(defaultDeviceBaseTopic(editor.id, deviceType, mqttBaseTopic), deviceType)
 
   const parts = [
     cleanText(meta.description, ""),
     `Modulo: ${cleanText(meta.module, "-")}`,
     deviceType === "sheltr_mini"
       ? `Cloud standard: ${derived.configTopic || "-"} / ${derived.lightCommandTopic || "-"} / ${derived.lightResponseTopic || "-"}`
-      : "Compatibile con la configurazione DR154 attuale.",
+      : `Topic DR154 standard: subscribe ${derived.lightCommandTopic || "-"} • publish ${derived.lightResponseTopic || "-"} • config ${derived.configTopic || "-"}`,
   ]
 
   return parts.filter(Boolean).join(" • ")
@@ -954,7 +888,7 @@ export function ConfigPage() {
                           value={editor.id}
                           onChange={(event) => {
                             const next = { ...editor, id: slugify(event.target.value, editor.id || "dr154-1") }
-                            updateEditor(editor.deviceType === "sheltr_mini" ? applyMiniTransport(next, mqttBaseTopic) : next)
+                            updateEditor(applyDerivedTransport(next, mqttBaseTopic))
                           }}
                         />
                       </div>
@@ -994,62 +928,6 @@ export function ConfigPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                      {!isMini ? (
-                        <>
-                          <div className="space-y-2">
-                            <Label>Base topic MQTT</Label>
-                            <Input
-                              value={cleanText(editor.mqtt.baseTopic, "")}
-                              placeholder="es. dr154/casa-demo"
-                              onChange={(event) => updateEditor({ ...editor, mqtt: { ...editor.mqtt, baseTopic: event.target.value } })}
-                              onBlur={() => updateEditor(applyBaseTopicTransport(editor, mqttBaseTopic))}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Topic configurazione</Label>
-                            <Input
-                              value={cleanText(editor.mqtt.configTopic, "")}
-                              onChange={(event) => updateEditor({ ...editor, mqtt: { ...editor.mqtt, configTopic: event.target.value } })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Topic comandi dispositivo</Label>
-                            <Input
-                              value={cleanText(editor.mqtt.lightCommandTopic, "")}
-                              onChange={(event) => updateEditor({ ...editor, mqtt: { ...editor.mqtt, lightCommandTopic: event.target.value } })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Topic risposta dispositivo</Label>
-                            <Input
-                              value={cleanText(editor.mqtt.lightResponseTopic, "")}
-                              onChange={(event) =>
-                                updateEditor({ ...editor, mqtt: { ...editor.mqtt, lightResponseTopic: event.target.value } })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Formato payload</Label>
-                            <Select
-                              value={cleanText(editor.mqtt.lightPayloadFormat, "frame_hex_space_crlf")}
-                              onValueChange={(value) =>
-                                updateEditor({ ...editor, mqtt: { ...editor.mqtt, lightPayloadFormat: value } })
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {PAYLOAD_FORMAT_OPTIONS.map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </>
-                      ) : null}
                       <div className="space-y-2">
                         <Label>Versione protocollo</Label>
                         <Input value="1.6" readOnly />

@@ -56,6 +56,11 @@ MQTT_PASSWORD=filippo1994
      - `responseTopic` = `<istanza>/pub`
      - `payloadFormat` = `frame_hex_space_crlf`
    - Per `Sheltr Mini` questi campi non si configurano manualmente nel portale.
+   - Per `Sheltr 4G / DR154` i topic non si configurano manualmente nel portale.
+     - `configTopic` = `/<istanza>/config`
+     - `commandTopic` = `/<istanza>/cmd`
+     - `responseTopic` = `/<istanza>/status`
+     - `payloadFormat` = `frame_hex_space_crlf`
    - Per `Sheltr Mini` non configuri manualmente le schede nel portale: il profilo si sincronizza dai dispositivi pubblicati dal Mini sul topic retained `<istanza>/config`.
 6. Aggiungi o modifica le schede (`light`, `shutter`, `dimmer`, `thermostat`).
    - Questo passaggio vale per `Sheltr 4G / DR154`.
@@ -66,18 +71,19 @@ MQTT_PASSWORD=filippo1994
     - Per `Sheltr 4G / DR154` invia la configurazione su MQTT.
     - Per `Sheltr Mini` la UI mostra `Sincronizza Sheltr Mini` ed esegue la sincronizzazione dal topic retained `<istanza>/config` pubblicato dal Mini.
 11. Apri il controllo dedicato su `/control/<istanza>`.
-12. Se `Sheltr 4G / DR154` è in `transparent mode`, imposta `Formato payload luci` su un formato `frame_*`.
-13. Per `Sheltr 4G / DR154` imposta anche `Topic risposta dispositivo` uguale al `Publish topic` del DR154.
-14. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
-15. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
-16. In controllo trovi card stanza per `luci`, `tapparelle`, `dimmer`, `termostato`.
-17. Sulle card con `⚙` puoi impostare il profilo orario.
-18. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
+12. Per `Sheltr 4G / DR154` configura il modulo con:
+    - `Subscriber topic`: `/<istanza>/cmd`
+    - `Publish topic`: `/<istanza>/status`
+13. La UI mostra lo stato ON/OFF confermato da polling protocollo (`command 0x40`) quando arriva risposta dal dispositivo.
+14. In controllo puoi usare `Aggiorna` per fare polling immediato dispositivi e aggiornare le card.
+15. In controllo trovi card stanza per `luci`, `tapparelle`, `dimmer`, `termostato`.
+16. Sulle card con `⚙` puoi impostare il profilo orario.
+17. In controllo non c'è polling automatico al refresh: il polling dispositivi parte solo con `Aggiorna`.
 
-Topic di default per la configurazione:
+Topic di default per la configurazione `Sheltr 4G / DR154`:
 
 ```text
-dr154/<istanza>/config
+/<istanza>/config
 ```
 
 Messaggio pubblicato in JSON, con `retain=true`.
@@ -90,19 +96,19 @@ Il payload include anche:
 Topic default comandi dispositivo (`Sheltr 4G / DR154`):
 
 ```text
-dr154/<istanza>/cmd/light
+/<istanza>/cmd
 ```
 
 Topic default risposta dispositivo (`Sheltr 4G / DR154`):
 
 ```text
-dr154/<istanza>/pub/light
+/<istanza>/status
 ```
 
 Configurazione DR154 consigliata:
 
-- `Subscriber topic` (DR154): `dr154/<istanza>/cmd/light`
-- `Publish topic` (DR154): `dr154/<istanza>/pub/light`
+- `Subscriber topic` (DR154): `/<istanza>/cmd`
+- `Publish topic` (DR154): `/<istanza>/status`
 
 Per `Sheltr Mini` con istanza `casa-pizero`:
 
@@ -111,8 +117,8 @@ Per `Sheltr Mini` con istanza `casa-pizero`:
 - `Topic risposta dispositivo`: `casa-pizero/pub`
 - `Formato payload comandi`: `frame_hex_space_crlf`
 
-Nota: non usare la slash iniziale (`/`).  
-`dr154/casa-demo/cmd/light` e `/dr154/casa-demo/cmd/light` sono due topic diversi.
+Nota: per `Sheltr 4G / DR154` la slash iniziale fa parte del topic.  
+`/casa-demo/cmd` e `casa-demo/cmd` sono due topic diversi.
 
 Formati payload supportati per i comandi dispositivo:
 

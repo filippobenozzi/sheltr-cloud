@@ -118,23 +118,36 @@ export function cleanTopicPath(value: unknown, fallback = "") {
 }
 
 export function defaultDeviceBaseTopic(instanceId: string, deviceType: DeviceType, mqttBaseTopic = "dr154") {
+  void mqttBaseTopic
   return deviceType === "sheltr_mini"
     ? cleanTopicPath(slugify(instanceId, "sheltr-mini"), "sheltr-mini")
-    : cleanTopicPath(`${mqttBaseTopic}/${instanceId}`, `${mqttBaseTopic}/${instanceId}`)
+    : `/${slugify(instanceId, "dr154-1")}`
 }
 
 export function topicsFromBaseTopic(baseTopic: string, deviceType: DeviceType) {
-  const base = cleanTopicPath(baseTopic, "")
-  if (!base) {
+  if (deviceType === "sheltr_mini") {
+    const base = cleanTopicPath(baseTopic, "")
+    if (!base) {
+      return { baseTopic: "", configTopic: "", lightCommandTopic: "", lightResponseTopic: "" }
+    }
+    return {
+      baseTopic: base,
+      configTopic: `${base}/config`,
+      lightCommandTopic: `${base}/cmd`,
+      lightResponseTopic: `${base}/pub`,
+    }
+  }
+
+  const baseSlug = slugify(cleanText(baseTopic, "").replace(/^\/+|\/+$/g, ""), "")
+  if (!baseSlug) {
     return { baseTopic: "", configTopic: "", lightCommandTopic: "", lightResponseTopic: "" }
   }
-  const commandSuffix = deviceType === "sheltr_mini" ? "cmd" : "cmd/light"
-  const responseSuffix = deviceType === "sheltr_mini" ? "pub" : "pub/light"
+  const base = `/${baseSlug}`
   return {
     baseTopic: base,
     configTopic: `${base}/config`,
-    lightCommandTopic: `${base}/${commandSuffix}`,
-    lightResponseTopic: `${base}/${responseSuffix}`,
+    lightCommandTopic: `${base}/cmd`,
+    lightResponseTopic: `${base}/status`,
   }
 }
 
