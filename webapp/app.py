@@ -49,6 +49,12 @@ MQTT_REQUIRE_RESPONSE = os.environ.get("MQTT_REQUIRE_RESPONSE", "false").strip()
     "yes",
     "on",
 }
+MQTT_STRICT_RESPONSE = os.environ.get("MQTT_STRICT_RESPONSE", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 INSTANCE_AUTH_TTL_SEC = max(300, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", "43200")))
 INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
 CONFIG_AUTH_USERNAME = (os.environ.get("CONFIG_AUTH_USERNAME") or "").strip()
@@ -2006,7 +2012,7 @@ def execute_light_targets(
             )
             if isinstance(verification.get("isOn"), bool):
                 next_on = bool(verification["isOn"])
-        if must_verify and not bool(verification.get("verified")):
+        if should_fail_on_missing_response(must_verify, bool(verification.get("verified"))):
             reason = clean_text(verification.get("reason"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
 
@@ -2434,7 +2440,7 @@ def execute_dimmer_targets(
                 address=clamp(to_int(entity.get("address"), 0), 0, 254),
             )
         verified = bool(verification.get("ok"))
-        if must_verify and not verified:
+        if should_fail_on_missing_response(must_verify, verified):
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
         if must_verify:
@@ -2552,7 +2558,7 @@ def execute_shutter_targets(
                 address=clamp(to_int(entity.get("address"), 0), 0, 254),
             )
         verified = bool(verification.get("ok"))
-        if must_verify and not verified:
+        if should_fail_on_missing_response(must_verify, verified):
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
         if must_verify:
@@ -2766,7 +2772,7 @@ def execute_thermostat_targets(
                 retry_delay_ms=THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
             )
         verified = bool(verification.get("ok"))
-        if must_verify and not verified:
+        if should_fail_on_missing_response(must_verify, verified):
             reason = clean_text(verification.get("error"), "nessuna risposta")
             raise RuntimeError(f"Nessuna conferma dal dispositivo per {entity['id']}: {reason}")
         if must_verify:
@@ -3107,6 +3113,10 @@ def parse_bool_flag(value: Any, default: bool = False) -> bool:
     return default
 
 
+def should_fail_on_missing_response(verify_requested: bool, verified: bool) -> bool:
+    return bool(verify_requested) and MQTT_STRICT_RESPONSE and not bool(verified)
+
+
 def extract_command_transport(instance: dict[str, Any], body: dict[str, Any]) -> tuple[str, str, str]:
     topic = clean_text(body.get("topic"), get_light_command_topic(instance))
     if not topic:
@@ -3416,6 +3426,7 @@ def api_meta():
             "mqttResponseRetries": MQTT_RESPONSE_RETRIES,
             "mqttResponseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
             "mqttResponseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+            "mqttStrictResponse": MQTT_STRICT_RESPONSE,
             "thermostatResponseTimeoutMs": THERMOSTAT_RESPONSE_TIMEOUT_MS,
             "thermostatResponseRetries": THERMOSTAT_RESPONSE_RETRIES,
             "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
@@ -3759,6 +3770,7 @@ def api_light_command(instance_id: str):
                 "thermostatResponseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
                 "thermostatResponseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "thermostatCommandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+                "strictResponse": MQTT_STRICT_RESPONSE,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3841,6 +3853,7 @@ def api_dimmer_command(instance_id: str):
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
                 "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "strictResponse": MQTT_STRICT_RESPONSE,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3911,6 +3924,7 @@ def api_shutter_command(instance_id: str):
                 "responseRetries": MQTT_RESPONSE_RETRIES,
                 "responseRetryDelayMs": MQTT_RESPONSE_RETRY_DELAY_MS,
                 "responseAfterCommandDelayMs": MQTT_RESPONSE_AFTER_COMMAND_DELAY_MS,
+                "strictResponse": MQTT_STRICT_RESPONSE,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],
@@ -3994,6 +4008,7 @@ def api_thermostat_command(instance_id: str):
                 "responseRetryDelayMs": THERMOSTAT_RESPONSE_RETRY_DELAY_MS,
                 "responseAfterCommandDelayMs": THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS,
                 "commandFrameGapMs": THERMOSTAT_COMMAND_FRAME_GAP_MS,
+                "strictResponse": MQTT_STRICT_RESPONSE,
                 "requireResponse": MQTT_REQUIRE_RESPONSE,
             },
             "sent": result["sent"],

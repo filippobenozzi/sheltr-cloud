@@ -145,7 +145,8 @@ Per ridurre i comandi persi in rete:
     - `THERMOSTAT_RESPONSE_RETRY_DELAY_MS=400`
     - `THERMOSTAT_RESPONSE_AFTER_COMMAND_DELAY_MS=700`
     - `THERMOSTAT_COMMAND_FRAME_GAP_MS=220`
-  - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il comando fallisce senza conferma)
+  - `MQTT_REQUIRE_RESPONSE=false` (se `true`, il portale prova a confermare il comando via polling `0x40`)
+  - `MQTT_STRICT_RESPONSE=false` (se `true`, il comando fallisce senza conferma; se `false`, torna `ok` ma con `verified=false` e `verifyReason`)
 - loop profili orari luci:
   - `LIGHT_PROFILE_LOOP_INTERVAL_SEC=20`
 - sessione login per istanza:
