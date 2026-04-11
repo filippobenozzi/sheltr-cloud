@@ -20,6 +20,26 @@ docker compose up -d --build
 
 La build Docker della webapp compila automaticamente il frontend Vite e pubblica la SPA sotto `webapp/static/app`.
 Se stai eseguendo solo Flask senza build frontend, il backend mantiene un fallback alle vecchie pagine statiche.
+Il builder frontend nel `Dockerfile` usa `bun` (`bun install --frozen-lockfile` + `bun run build`).
+
+## Frontend Bun + shadcn
+
+Per lavorare sul frontend React/shadcn localmente:
+
+```bash
+cd webapp/frontend
+bun install
+bun run build
+```
+
+Per aggiungere componenti ufficiali `shadcn/ui` con Bun:
+
+```bash
+cd webapp/frontend
+bun run ui:add sidebar --overwrite
+```
+
+Il progetto ha anche `components.json` configurato per il CLI shadcn e lockfile `bun.lock`, quindi il workflow frontend e Docker restano allineati.
 
 ## Endpoint esposti
 

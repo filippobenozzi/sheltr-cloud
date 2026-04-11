@@ -1,18 +1,19 @@
-FROM node:22-alpine AS frontend-builder
+FROM oven/bun:1.3.12-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
 COPY frontend/package.json ./
+COPY frontend/bun.lock ./
 COPY frontend/tsconfig.json ./
 COPY frontend/tsconfig.node.json ./
 COPY frontend/vite.config.ts ./
 COPY frontend/components.json ./
 COPY frontend/index.html ./
 
-RUN npm install
+RUN bun install --frozen-lockfile
 
 COPY frontend/src ./src
-RUN npm run build
+RUN bun run build
 
 FROM python:3.12-slim
 
