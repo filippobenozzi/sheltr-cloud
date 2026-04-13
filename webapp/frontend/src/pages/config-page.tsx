@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { Copy, ExternalLink, LayoutList, LogOut, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, LayoutList, LogOut, Plus, Save, Settings2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
@@ -1103,7 +1103,7 @@ export function ConfigPage() {
                       <Button asChild size="sm" variant="outline" className="rounded-full">
                         <a href={controlUrl(editor.id)} target="_blank" rel="noreferrer">
                           <ExternalLink className="size-4" />
-                          <span className="hidden sm:inline">Apri in nuova tab</span>
+                          <span className="hidden sm:inline">Apri controllo</span>
                         </a>
                       </Button>
                       <Button type="button" size="sm" className="rounded-full" onClick={requestSaveCurrent}>
@@ -1208,23 +1208,6 @@ export function ConfigPage() {
                                 ))}
                               </SelectContent>
                             </Select>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Versione protocollo</Label>
-                            <Input value="1.6" readOnly />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>{isMini ? "Dispositivi rilevati" : "Schede configurate"}</Label>
-                            <Input
-                              readOnly
-                              value={
-                                isMini
-                                  ? associatedDevices.length
-                                    ? `AUTO (${associatedDevices.length})`
-                                    : "AUTO"
-                                  : String(editor.boards.length)
-                              }
-                            />
                           </div>
                         </div>
                         {deviceHint ? <p className="text-sm text-muted-foreground">{deviceHint}</p> : null}
@@ -1353,13 +1336,6 @@ export function ConfigPage() {
                       <section className="space-y-4">
                         <h2 className="text-xl font-semibold tracking-tight">Azioni</h2>
                         <div className="flex flex-wrap gap-3">
-                          <Button type="button" variant="outline" onClick={publishCurrent}>
-                            <RefreshCw className="size-4" />
-                            {isMini ? "Sincronizza Sheltr Mini" : "Pubblica su MQTT"}
-                          </Button>
-                          <Button asChild variant="outline">
-                            <Link to={controlUrl(editor.id)}>Apri controllo</Link>
-                          </Button>
                           <Button type="button" variant="destructive" onClick={deleteCurrent}>
                             <Trash2 className="size-4" />
                             Elimina istanza

@@ -44,7 +44,7 @@ export function AppShell({
     <div
       className={cn(
         "page-shell relative",
-        variant === "full" ? "page-shell-flat overflow-x-hidden" : "overflow-hidden"
+        variant === "full" ? "page-shell-flat" : "overflow-hidden"
       )}
     >
       <div className={cn(variant === "full" ? "relative flex w-full flex-col" : "page-container relative")}>
