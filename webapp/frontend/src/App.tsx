@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom"
 
-import { Toaster } from "@/components/ui/sonner"
+import { NotificationCenter } from "@/components/ui/notification-center"
 import { ConfigPage } from "@/pages/config-page"
 import { ControlPage } from "@/pages/control-page"
 import { HomePage } from "@/pages/home-page"
@@ -17,7 +17,7 @@ export default function App() {
         <Route path="/instance/:instanceId" element={<ControlPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <Toaster position="top-right" closeButton />
+      <NotificationCenter />
     </>
   )
 }

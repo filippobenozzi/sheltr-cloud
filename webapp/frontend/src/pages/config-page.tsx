@@ -1,7 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { Copy, ExternalLink, LayoutList, LogOut, Plus, Save, Settings2, Trash2 } from "lucide-react"
-import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -66,6 +65,7 @@ import {
   normalizeDeviceType,
   topicsFromBaseTopic,
 } from "@/lib/device"
+import { notify } from "@/lib/notifications"
 import { cleanText, clamp, slugify, toInt } from "@/lib/utils"
 import type {
   Board,
@@ -628,18 +628,18 @@ export function ConfigPage() {
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
     if (error) {
-      toast.error(text)
+      notify({ title: "Attenzione", description: text, tone: "destructive" })
       return
     }
     if (tone === "info") {
-      toast.info(text)
+      notify({ title: "Info", description: text, tone: "info" })
       return
     }
     if (tone === "warning") {
-      toast.warning(text)
+      notify({ title: "Avviso", description: text, tone: "warning" })
       return
     }
-    toast.success(text)
+    notify({ title: "Operazione completata", description: text, tone: "success" })
   }
 
   function handleConfigAuthError(error: unknown) {

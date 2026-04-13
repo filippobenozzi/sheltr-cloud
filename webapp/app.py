@@ -55,11 +55,12 @@ MQTT_STRICT_RESPONSE = os.environ.get("MQTT_STRICT_RESPONSE", "false").strip().l
     "yes",
     "on",
 }
-INSTANCE_AUTH_TTL_SEC = max(300, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", "43200")))
+ONE_MONTH_SEC = 60 * 60 * 24 * 30
+INSTANCE_AUTH_TTL_SEC = max(ONE_MONTH_SEC, int(os.environ.get("INSTANCE_AUTH_TTL_SEC", str(ONE_MONTH_SEC))))
 INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
 CONFIG_AUTH_USERNAME = (os.environ.get("CONFIG_AUTH_USERNAME") or "").strip()
 CONFIG_AUTH_PASSWORD = (os.environ.get("CONFIG_AUTH_PASSWORD") or "").strip()
-CONFIG_AUTH_TTL_SEC = max(300, int(os.environ.get("CONFIG_AUTH_TTL_SEC", "43200")))
+CONFIG_AUTH_TTL_SEC = max(ONE_MONTH_SEC, int(os.environ.get("CONFIG_AUTH_TTL_SEC", str(ONE_MONTH_SEC))))
 LIGHT_PROFILE_LOOP_INTERVAL_SEC = max(5, int(os.environ.get("LIGHT_PROFILE_LOOP_INTERVAL_SEC", "20")))
 LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {

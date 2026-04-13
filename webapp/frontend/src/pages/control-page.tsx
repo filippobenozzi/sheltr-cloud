@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { LogOut, RefreshCw, Settings2, Star } from "lucide-react"
-import { toast } from "sonner"
 
 import { AppShell } from "@/components/app-shell"
 import {
@@ -43,6 +42,7 @@ import {
   normalizeThermostatEntry,
   normalizeThermostatProfile,
 } from "@/lib/device"
+import { notify } from "@/lib/notifications"
 import { applyControlPwaIdentity, registerControlPwa } from "@/lib/pwa"
 import { cleanText, clamp, cn, normalizeMode, normalizeTime, slugify } from "@/lib/utils"
 import type {
@@ -269,18 +269,18 @@ export function ControlPage() {
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
     if (error) {
-      toast.error(text)
+      notify({ title: "Attenzione", description: text, tone: "destructive" })
       return
     }
     if (tone === "info") {
-      toast.info(text)
+      notify({ title: "Info", description: text, tone: "info" })
       return
     }
     if (tone === "warning") {
-      toast.warning(text)
+      notify({ title: "Avviso", description: text, tone: "warning" })
       return
     }
-    toast.success(text)
+    notify({ title: "Operazione completata", description: text, tone: "success" })
   }
 
   function profileOf(kind: ProfileKind, id: string) {
@@ -663,7 +663,7 @@ export function ControlPage() {
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="rounded-full"
+        className="rounded-md"
         onClick={() => toggleFavorite(kind, id)}
       >
         <Star className={cn("size-4", active && "fill-yellow-400 text-yellow-500")} />
@@ -683,7 +683,7 @@ export function ControlPage() {
               {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
             </div>
             <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("light", light.id)}>
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("light", light.id)}>
                 <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
               </Button>
               {renderFavoriteButton("light", light.id)}
@@ -695,7 +695,7 @@ export function ControlPage() {
               size="sm"
               variant="outline"
               className={cn(
-                "flex-1 rounded-full border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800",
+                "flex-1 rounded-md border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800",
                 light.isOn === true && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
               )}
               disabled={busyKeys.includes(busyId)}
@@ -715,7 +715,7 @@ export function ControlPage() {
               size="sm"
               variant="outline"
               className={cn(
-                "flex-1 rounded-full border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800",
+                "flex-1 rounded-md border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800",
                 light.isOn === false && "border-rose-600 bg-rose-600 text-white hover:bg-rose-700 hover:text-white"
               )}
               disabled={busyKeys.includes(busyId)}
@@ -753,7 +753,7 @@ export function ControlPage() {
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="rounded-full"
+                className="rounded-md"
                 onClick={() => showNote("Profili orari non disponibili per i dimmer.", false, "info")}
               >
                 <Settings2 className="size-4 text-muted-foreground" />
@@ -766,7 +766,7 @@ export function ControlPage() {
               type="button"
               variant={dimmer.isOn === true ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -783,7 +783,7 @@ export function ControlPage() {
               type="button"
               variant={dimmer.isOn === false ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -824,7 +824,7 @@ export function ControlPage() {
               <Button
                 type="button"
                 size="sm"
-                className="rounded-full"
+                className="rounded-md"
                 disabled={busyKeys.includes(busyId)}
                 onClick={() =>
                   void executeCommand(
@@ -857,7 +857,7 @@ export function ControlPage() {
               {showRoomName ? <p className="text-xs text-muted-foreground">{roomName}</p> : null}
             </div>
             <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("shutter", shutter.id)}>
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("shutter", shutter.id)}>
                 <Settings2 className={cn("size-4", profileEnabled && "text-primary")} />
               </Button>
               {renderFavoriteButton("shutter", shutter.id)}
@@ -868,7 +868,7 @@ export function ControlPage() {
               type="button"
               variant={shutter.action === "up" ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -885,7 +885,7 @@ export function ControlPage() {
               type="button"
               variant="outline"
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -902,7 +902,7 @@ export function ControlPage() {
               type="button"
               variant={shutter.action === "down" ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -935,7 +935,7 @@ export function ControlPage() {
               <p className="text-xs text-muted-foreground">{formatTemperature(thermostat.temperature)}</p>
             </div>
             <div className="flex items-center gap-1">
-              <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" onClick={() => openProfile("thermostat", thermostat.id)}>
+              <Button type="button" variant="ghost" size="icon-sm" className="rounded-md" onClick={() => openProfile("thermostat", thermostat.id)}>
                 <Settings2 className={cn("size-4", profiles.thermostat[thermostat.id]?.enabled && "text-primary")} />
               </Button>
               {renderFavoriteButton("thermostat", thermostat.id)}
@@ -946,7 +946,7 @@ export function ControlPage() {
               type="button"
               variant={thermostat.mode === "winter" ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -963,7 +963,7 @@ export function ControlPage() {
               type="button"
               variant={thermostat.mode === "summer" ? "default" : "outline"}
               size="sm"
-              className="rounded-full"
+              className="rounded-md"
               disabled={busyKeys.includes(busyId)}
               onClick={() =>
                 void executeCommand(
@@ -1004,7 +1004,7 @@ export function ControlPage() {
               <Button
                 type="button"
                 size="sm"
-                className="rounded-full"
+                className="rounded-md"
                 disabled={busyKeys.includes(busyId)}
                 onClick={() =>
                   void executeCommand(
@@ -1030,7 +1030,7 @@ export function ControlPage() {
         {room.lights.length ? (
           <section className="space-y-4">
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Luci</h2>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {sortRoomItems(room.lights).map((light) => renderLightTile(light, room.name))}
             </div>
           </section>
@@ -1039,7 +1039,7 @@ export function ControlPage() {
         {room.dimmers.length ? (
           <section className="space-y-4">
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Dimmer</h2>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {sortRoomItems(room.dimmers).map((dimmer) => renderDimmerTile(dimmer, room.name))}
             </div>
           </section>
@@ -1048,7 +1048,7 @@ export function ControlPage() {
         {room.shutters.length ? (
           <section className="space-y-4">
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Tapparelle</h2>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {sortRoomItems(room.shutters).map((shutter) => renderShutterTile(shutter, room.name))}
             </div>
           </section>
@@ -1057,7 +1057,7 @@ export function ControlPage() {
         {room.thermostats.length ? (
           <section className="space-y-4">
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Termostati</h2>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {sortRoomItems(room.thermostats).map((thermostat) => renderThermostatTile(thermostat, room.name))}
             </div>
           </section>
@@ -1104,24 +1104,18 @@ export function ControlPage() {
               <Breadcrumb>
                 <BreadcrumbList className="text-xs">
                   <BreadcrumbItem>
-                    <BreadcrumbLink asChild>
-                      <Link to="/">Home</Link>
-                    </BreadcrumbLink>
+                    {instance ? (
+                      selectedRoom ? (
+                        <BreadcrumbLink asChild>
+                          <Link to={controlUrl(instance.id)}>{instance.name}</Link>
+                        </BreadcrumbLink>
+                      ) : (
+                        <BreadcrumbPage>{instance.name}</BreadcrumbPage>
+                      )
+                    ) : (
+                      <BreadcrumbPage>Controllo</BreadcrumbPage>
+                    )}
                   </BreadcrumbItem>
-                  {instance ? (
-                    <>
-                      <BreadcrumbSeparator />
-                      <BreadcrumbItem>
-                        {selectedRoom ? (
-                          <BreadcrumbLink asChild>
-                            <Link to={controlUrl(instance.id)}>{instance.name}</Link>
-                          </BreadcrumbLink>
-                        ) : (
-                          <BreadcrumbPage>{instance.name}</BreadcrumbPage>
-                        )}
-                      </BreadcrumbItem>
-                    </>
-                  ) : null}
                   {selectedRoom ? (
                     <>
                       <BreadcrumbSeparator />
@@ -1139,12 +1133,12 @@ export function ControlPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={() => void loadStatus(true, false)}>
+              <Button type="button" variant="outline" size="sm" className="rounded-md" onClick={() => void loadStatus(true, false)}>
                 <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
                 Aggiorna
               </Button>
               {authRequired ? (
-                <Button type="button" variant="ghost" size="sm" className="rounded-full" onClick={logout}>
+                <Button type="button" variant="ghost" size="sm" className="rounded-md" onClick={logout}>
                   <LogOut className="size-4" />
                   Logout
                 </Button>
@@ -1197,7 +1191,7 @@ export function ControlPage() {
                 <section className="space-y-3">
                   <h2 className="text-xl font-semibold tracking-tight">Stanza non trovata</h2>
                   <p className="text-sm text-muted-foreground">La stanza richiesta non è disponibile in questa istanza.</p>
-                  <Button asChild variant="outline" className="rounded-full">
+                  <Button asChild variant="outline" className="rounded-md">
                     <Link to={controlUrl(instance.id)}>Torna a tutte le stanze</Link>
                   </Button>
                 </section>
@@ -1211,7 +1205,7 @@ export function ControlPage() {
                         <h2 className="text-xl font-semibold tracking-tight">Preferiti</h2>
                         <p className="text-sm text-muted-foreground">Comandi evidenziati per accesso rapido.</p>
                       </div>
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         {favoriteTiles.map((item) => item.node)}
                       </div>
                     </section>
@@ -1223,7 +1217,7 @@ export function ControlPage() {
                       <p className="text-sm text-muted-foreground">Apri una stanza per vedere solo i suoi comandi.</p>
                     </div>
                     {rooms.length ? (
-                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         {rooms.map((room) => (
                           <Link key={room.name} to={roomViewUrl(instance.id, room.name)} className="block">
                             <Card className="h-full border-border/80 shadow-none transition-colors hover:border-foreground/20 hover:bg-muted/20">
