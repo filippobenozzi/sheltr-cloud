@@ -739,6 +739,7 @@ export function ControlPage() {
   function renderDimmerTile(dimmer: StatusRoom["dimmers"][number], roomName: string, showRoomName = false) {
     const busyId = `dimmer-${dimmer.id}`
     const level = Number.isFinite(Number(dimmer.level)) ? Math.max(0, Math.min(9, Math.round(Number(dimmer.level)))) : 0
+    const sliderValue = [level]
 
     return (
       <Card key={`dimmer-${roomName}-${dimmer.id}`} className="border-border/70 shadow-none">
@@ -797,15 +798,15 @@ export function ControlPage() {
               OFF
             </Button>
           </div>
-          <div className="space-y-2">
-            <Input
-              type="range"
+          <div className="flex items-center gap-3">
+            <Slider
               min={0}
               max={9}
               step={1}
-              value={level}
-              onChange={(event) => {
-                const nextValue = Number(event.target.value)
+              value={sliderValue}
+              className="flex-1"
+              onValueChange={(values) => {
+                const nextValue = Number(values[0] ?? level)
                 setStatus((current) => {
                   if (!current) return current
                   const next = cloneValue(current)
@@ -819,8 +820,8 @@ export function ControlPage() {
                 })
               }}
             />
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">{level}</span>
+            <span className="shrink-0 text-sm font-medium">{level}</span>
+            <div className="shrink-0">
               <Button
                 type="button"
                 size="sm"
