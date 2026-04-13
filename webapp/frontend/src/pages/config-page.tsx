@@ -983,7 +983,7 @@ export function ConfigPage() {
         <>
           <SidebarProvider defaultOpen>
             <Sidebar collapsible="icon">
-              <SidebarHeader className="h-24 justify-center border-b border-sidebar-border px-4 md:h-28 md:px-6">
+              <SidebarHeader className="h-16 justify-center border-b border-sidebar-border px-4 md:h-20 md:px-6">
                 <div className="space-y-1 overflow-hidden px-2 py-1 group-data-[collapsible=icon]:hidden">
                   <p className="text-xs font-medium uppercase tracking-[0.24em] text-sidebar-foreground/60">Sheltr Cloud</p>
                   <p className="truncate text-sm font-semibold text-sidebar-foreground">Configuration</p>
@@ -1048,15 +1048,15 @@ export function ConfigPage() {
             </Sidebar>
 
             <SidebarInset className="min-w-0 w-full">
-              <header className="sticky top-0 z-20 flex h-24 shrink-0 items-stretch justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:h-28 md:px-6">
-                <div className="flex min-w-0 items-stretch gap-3 self-stretch">
+              <header className="sticky top-0 z-30 flex h-16 shrink-0 items-stretch justify-between gap-2 border-b bg-background/95 px-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90 md:h-20 md:px-6">
+                <div className="flex min-w-0 items-stretch gap-2 self-stretch">
                   <div className="flex items-center">
-                    <SidebarTrigger className="rounded-full" />
+                    <SidebarTrigger className="size-8 rounded-full" />
                   </div>
-                  <SidebarSeparator orientation="vertical" className="mx-1" />
-                  <div className="flex min-w-0 flex-col justify-center gap-2 py-4">
+                  <SidebarSeparator orientation="vertical" className="mx-0.5" />
+                  <div className="flex min-w-0 flex-col justify-center gap-1 py-2">
                     <Breadcrumb>
-                      <BreadcrumbList>
+                      <BreadcrumbList className="text-xs">
                         <BreadcrumbItem>
                           <BreadcrumbLink asChild>
                             <Link to="/">Home</Link>
@@ -1082,30 +1082,31 @@ export function ConfigPage() {
                         ) : null}
                       </BreadcrumbList>
                     </Breadcrumb>
-                    <p className="truncate text-2xl font-semibold tracking-tight">{pageTitle}</p>
+                    <p className="truncate text-lg font-semibold tracking-tight md:text-xl">{pageTitle}</p>
                   </div>
                 </div>
 
                 <nav className="flex flex-wrap items-center gap-2">
                   {editor ? (
                     <>
-                      <Button type="button" variant="outline" className="rounded-full" onClick={() => void copyText(fullControlUrl(editor.id))}>
+                      <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => void copyText(fullControlUrl(editor.id))}>
                         <Copy className="size-4" />
                         <span className="hidden sm:inline">Copia link</span>
                       </Button>
-                      <Button type="button" className="rounded-full" onClick={requestSaveCurrent}>
+                      <Button type="button" size="sm" className="rounded-full" onClick={requestSaveCurrent}>
                         <Save className="size-4" />
                         <span className="hidden sm:inline">Salva</span>
                       </Button>
                     </>
                   ) : (
                     <>
-                      <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
+                      <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
                         <Plus className="size-4" />
                         <span className="hidden sm:inline">Aggiungi istanza</span>
                       </Button>
                       <Button
                         type="button"
+                        size="sm"
                         variant={listView ? "secondary" : "outline"}
                         className="rounded-full"
                         onClick={() => navigate("/config")}
