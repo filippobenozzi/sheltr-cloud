@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, useEffect, useState } from "react"
+import { type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { Copy, ExternalLink, LayoutList, LogOut, Plus, RefreshCw, Save, Settings2, Trash2 } from "lucide-react"
 
@@ -38,6 +38,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Switch } from "@/components/ui/switch"
@@ -534,7 +536,7 @@ function InstancesTable({
   }
 
   return (
-    <div className="overflow-x-auto border-y bg-background">
+    <div className="min-w-0 overflow-x-auto border-y bg-background">
       <table className="min-w-full text-sm">
         <thead className="bg-muted/40 text-left text-muted-foreground">
           <tr className="border-b">
@@ -973,17 +975,8 @@ export function ConfigPage() {
         </Card>
       ) : (
         <>
-          <SidebarProvider
-            defaultOpen
-            style={
-              {
-                "--sidebar-width": "17rem",
-                "--sidebar-width-mobile": "18rem",
-                "--sidebar-width-icon": "4rem",
-              } as CSSProperties
-            }
-          >
-            <Sidebar collapsible="icon">
+          <SidebarProvider defaultOpen>
+            <Sidebar collapsible="offcanvas">
               <SidebarHeader className="border-b border-sidebar-border p-3">
                 <div className="flex items-center gap-3 overflow-hidden rounded-xl px-2 py-1">
                   <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-sidebar-border bg-sidebar-accent">
@@ -1016,6 +1009,8 @@ export function ConfigPage() {
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>
+
+                <SidebarSeparator />
 
                 <SidebarGroup>
                   <SidebarGroupLabel>Contesto</SidebarGroupLabel>
@@ -1065,39 +1060,39 @@ export function ConfigPage() {
                   ) : null}
                 </SidebarMenu>
               </SidebarFooter>
+              <SidebarRail />
             </Sidebar>
 
-            <SidebarInset>
-              <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
-                <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-6">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <SidebarTrigger className="rounded-full" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{pageTitle}</p>
-                      <p className="hidden text-xs text-muted-foreground md:block">Configurazione istanze Sheltr Cloud</p>
-                    </div>
+            <SidebarInset className="min-w-0">
+              <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-6">
+                <div className="flex min-w-0 items-center gap-3">
+                  <SidebarTrigger className="rounded-full" />
+                  <SidebarSeparator orientation="vertical" className="h-4" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{pageTitle}</p>
+                    <p className="hidden text-xs text-muted-foreground md:block">Configurazione istanze Sheltr Cloud</p>
                   </div>
-
-                  <nav className="flex flex-wrap items-center gap-2">
-                    <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
-                      <Plus className="size-4" />
-                      <span className="hidden sm:inline">Aggiungi istanza</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={listView ? "secondary" : "outline"}
-                      className="rounded-full"
-                      onClick={() => navigate("/config")}
-                    >
-                      <LayoutList className="size-4" />
-                      <span className="hidden sm:inline">Istanze</span>
-                    </Button>
-                  </nav>
                 </div>
+
+                <nav className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
+                    <Plus className="size-4" />
+                    <span className="hidden sm:inline">Aggiungi istanza</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={listView ? "secondary" : "outline"}
+                    className="rounded-full"
+                    onClick={() => navigate("/config")}
+                  >
+                    <LayoutList className="size-4" />
+                    <span className="hidden sm:inline">Istanze</span>
+                  </Button>
+                </nav>
               </header>
 
-              <div className="flex-1 px-4 py-6 md:px-6">
-                <div className="w-full space-y-6">
+              <div className="flex min-w-0 flex-1 flex-col gap-6 px-4 py-6 md:px-6">
+                <div className="w-full min-w-0 space-y-6">
                   {note.text ? (
                     <Alert variant={note.error ? "destructive" : "default"}>
                       <AlertTitle>{note.error ? "Attenzione" : "Stato"}</AlertTitle>
@@ -1108,7 +1103,7 @@ export function ConfigPage() {
                   {loading ? <p className="text-sm text-muted-foreground">Caricamento configurazione in corso...</p> : null}
 
                   {!loading && listView ? (
-                    <section className="space-y-4">
+                    <section className="w-full min-w-0 space-y-4">
                       <div className="space-y-1">
                         <h2 className="text-2xl font-semibold tracking-tight">Istanze</h2>
                         <p className="text-sm text-muted-foreground">
@@ -1136,7 +1131,7 @@ export function ConfigPage() {
 
                   {!loading && editor ? (
                     <>
-                      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_360px]">
+                      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_360px]">
                         <Card className="border-border/80 bg-background/90">
                           <CardHeader>
                             <CardTitle>Dati istanza</CardTitle>
