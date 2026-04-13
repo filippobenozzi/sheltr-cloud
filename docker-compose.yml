@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sheltr}
+      POSTGRES_USER: ${POSTGRES_USER:-sheltr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sheltr}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sheltr} -d ${POSTGRES_DB:-sheltr}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
   mqtt:
     image: eclipse-mosquitto:2
     restart: unless-stopped
@@ -22,13 +39,20 @@ services:
       context: ./webapp
     restart: unless-stopped
     depends_on:
-      - mqtt
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
     networks:
       - pangolin
       - default
     environment:
       APP_PORT: "8080"
       CONFIG_FILE: /data/config.json
+      DATABASE_URL: ${DATABASE_URL:-postgresql://sheltr:sheltr@postgres:5432/sheltr}
+      DB_CONNECT_TIMEOUT_SEC: "${DB_CONNECT_TIMEOUT_SEC:-8}"
+      DB_BOOTSTRAP_RETRIES: "${DB_BOOTSTRAP_RETRIES:-20}"
+      DB_BOOTSTRAP_DELAY_SEC: "${DB_BOOTSTRAP_DELAY_SEC:-2}"
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
       MQTT_USERNAME: ${MQTT_USERNAME:-filippo}
@@ -50,6 +74,7 @@ services:
       INSTANCE_AUTH_SECRET: "${INSTANCE_AUTH_SECRET:-}"
       CONFIG_AUTH_USERNAME: "${CONFIG_AUTH_USERNAME:-}"
       CONFIG_AUTH_PASSWORD: "${CONFIG_AUTH_PASSWORD:-}"
+      CONFIG_AUTH_EMAIL: "${CONFIG_AUTH_EMAIL:-admin@sheltr.local}"
       CONFIG_AUTH_TTL_SEC: "${CONFIG_AUTH_TTL_SEC:-43200}"
       LIGHT_PROFILE_LOOP_INTERVAL_SEC: "${LIGHT_PROFILE_LOOP_INTERVAL_SEC:-20}"
     volumes:

@@ -1184,7 +1184,7 @@ export function ControlPage() {
               <h2 className="text-xl font-semibold tracking-tight">Login</h2>
               <div className="space-y-4 rounded-2xl border border-border/80 bg-background p-5 shadow-none">
                 <div className="space-y-2">
-                  <Label>Username</Label>
+                  <Label>Username o email</Label>
                   <Input value={loginUser} onChange={(event) => setLoginUser(event.target.value)} />
                 </div>
                 <div className="space-y-2">

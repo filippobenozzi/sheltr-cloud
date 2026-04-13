@@ -95,7 +95,21 @@ export type ConfigInstanceListItem = {
   deviceLabel?: string
   boardsCount: number
   authRequired: boolean
+  assignedUsersCount?: number
   controlUrl?: string
+  updatedAt?: string
+}
+
+export type ConfigUserRole = "admin" | "user"
+
+export type ConfigUser = {
+  id: string
+  username: string
+  email: string
+  role: ConfigUserRole
+  instanceIds: string[]
+  instancesCount?: number
+  isDefaultAdmin?: boolean
   updatedAt?: string
 }
 
@@ -187,6 +201,14 @@ export type InstanceAuthLoginResponse = {
 
 export type ConfigAuthLoginResponse = InstanceAuthLoginResponse & {
   required?: boolean
+}
+
+export type ConfigUserResponse = {
+  user: ConfigUser
+}
+
+export type ConfigUsersResponse = {
+  users?: ConfigUser[]
 }
 
 export type CommandSentItem = {

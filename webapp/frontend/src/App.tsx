@@ -11,6 +11,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/config" element={<ConfigPage />} />
+        <Route path="/config/users" element={<ConfigPage />} />
         <Route path="/instance/:instanceId/config" element={<ConfigPage />} />
         <Route path="/control" element={<ControlPage />} />
         <Route path="/control/:instanceId" element={<ControlPage />} />

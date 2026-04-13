@@ -6,19 +6,26 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, send_from_directory
-from paho.mqtt import client as mqtt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from paho.mqtt import client as mqtt
+import psycopg
+from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 APP_PORT = int(os.environ.get("APP_PORT", "8080"))
 CONFIG_FILE = Path(os.environ.get("CONFIG_FILE", "/data/config.json"))
 LIGHT_STATE_FILE = Path(os.environ.get("LIGHT_STATE_FILE", "/data/light_state.json"))
+DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
+DB_CONNECT_TIMEOUT_SEC = max(2, int(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "8")))
+DB_BOOTSTRAP_RETRIES = max(1, int(os.environ.get("DB_BOOTSTRAP_RETRIES", "20")))
+DB_BOOTSTRAP_DELAY_SEC = max(1, int(os.environ.get("DB_BOOTSTRAP_DELAY_SEC", "2")))
 MQTT_HOST = os.environ.get("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "filippo")
@@ -60,8 +67,11 @@ INSTANCE_AUTH_TTL_SEC = max(ONE_MONTH_SEC, int(os.environ.get("INSTANCE_AUTH_TTL
 INSTANCE_AUTH_SECRET = (os.environ.get("INSTANCE_AUTH_SECRET") or "").strip() or f"{MQTT_USERNAME}:{MQTT_PASSWORD}:instance-auth"
 CONFIG_AUTH_USERNAME = (os.environ.get("CONFIG_AUTH_USERNAME") or "").strip()
 CONFIG_AUTH_PASSWORD = (os.environ.get("CONFIG_AUTH_PASSWORD") or "").strip()
+CONFIG_AUTH_EMAIL = (os.environ.get("CONFIG_AUTH_EMAIL") or "").strip()
 CONFIG_AUTH_TTL_SEC = max(ONE_MONTH_SEC, int(os.environ.get("CONFIG_AUTH_TTL_SEC", str(ONE_MONTH_SEC))))
 LIGHT_PROFILE_LOOP_INTERVAL_SEC = max(5, int(os.environ.get("LIGHT_PROFILE_LOOP_INTERVAL_SEC", "20")))
+STORE_DB_KEY = "config_store"
+USER_ROLES = {"admin", "user"}
 LIGHT_COMMAND_ACTIONS = {"on", "off"}
 LIGHT_PAYLOAD_FORMATS = {
     "json",
@@ -855,21 +865,6 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
     light_response_topic = mqtt_defaults["lightResponseTopic"]
     light_payload_format = mqtt_defaults["lightPayloadFormat"]
 
-    auth_in = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
-    auth_current = current.get("auth") if isinstance(current.get("auth"), dict) else {}
-    auth_username = clean_text(auth_in.get("username"), clean_text(auth_current.get("username"), ""))
-    auth_hash = clean_text(auth_current.get("passwordHash"), "")
-    clear_password = bool(auth_in.get("clearPassword"))
-    password_raw = auth_in.get("password")
-    if clear_password:
-        auth_hash = ""
-    elif isinstance(password_raw, str):
-        password_raw = password_raw.strip()
-        if password_raw:
-            auth_hash = generate_password_hash(password_raw)
-    if not auth_username:
-        auth_hash = ""
-
     boards = [normalize_board(item, idx) for idx, item in enumerate(boards_input[:64])]
     if not boards:
         boards = build_device_default_boards(device_type)
@@ -887,10 +882,6 @@ def normalize_instance(raw: Any, fallback_id: str, current_instance: dict[str, A
             "lightResponseTopic": light_response_topic,
             "lightPayloadFormat": light_payload_format,
         },
-        "auth": {
-            "username": auth_username,
-            "passwordHash": auth_hash,
-        },
         "updatedAt": now_iso(),
     }
 
@@ -901,7 +892,7 @@ def ensure_store_file() -> None:
         CONFIG_FILE.write_text('{"instances": []}\n', encoding="utf-8")
 
 
-def load_store() -> dict[str, Any]:
+def read_legacy_store_file() -> dict[str, Any]:
     ensure_store_file()
     try:
         content = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -913,11 +904,155 @@ def load_store() -> dict[str, Any]:
     return {"instances": instances}
 
 
+def connect_db():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL non configurato")
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=DB_CONNECT_TIMEOUT_SEC)
+
+
+def ensure_default_admin_user(cur: Any) -> None:
+    username = clean_text(CONFIG_AUTH_USERNAME, "")
+    password = str(CONFIG_AUTH_PASSWORD or "").strip()
+    if not username or not password:
+        return
+
+    email = clean_text(CONFIG_AUTH_EMAIL, f"{slugify(username, 'admin')}@local")
+    password_hash = generate_password_hash(password)
+    cur.execute(
+        """
+        SELECT id
+        FROM app_users
+        WHERE is_env_managed = TRUE
+           OR LOWER(username) = LOWER(%s)
+           OR LOWER(email) = LOWER(%s)
+        ORDER BY is_env_managed DESC, created_at ASC
+        LIMIT 1
+        """,
+        (username, email),
+    )
+    existing = cur.fetchone()
+    if existing:
+        cur.execute(
+            """
+            UPDATE app_users
+            SET username = %s,
+                email = %s,
+                password_hash = %s,
+                role = 'admin',
+                is_env_managed = TRUE,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (username, email, password_hash, existing["id"]),
+        )
+        return
+
+    cur.execute(
+        """
+        INSERT INTO app_users (id, username, email, password_hash, role, is_env_managed, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, 'admin', TRUE, NOW(), NOW())
+        """,
+        (str(uuid.uuid4()), username, email, password_hash),
+    )
+
+
+def bootstrap_database() -> None:
+    last_error: Exception | None = None
+    for attempt in range(1, DB_BOOTSTRAP_RETRIES + 1):
+        try:
+            with connect_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS app_store (
+                            key TEXT PRIMARY KEY,
+                            payload JSONB NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS app_users (
+                            id TEXT PRIMARY KEY,
+                            username TEXT NOT NULL UNIQUE,
+                            email TEXT NOT NULL UNIQUE,
+                            password_hash TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            is_env_managed BOOLEAN NOT NULL DEFAULT FALSE,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cur.execute("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_env_managed BOOLEAN NOT NULL DEFAULT FALSE")
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS app_user_instance_assignments (
+                            user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                            instance_id TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            PRIMARY KEY (user_id, instance_id)
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_app_user_instance_assignments_instance_id
+                        ON app_user_instance_assignments (instance_id)
+                        """
+                    )
+                    cur.execute("SELECT 1 FROM app_store WHERE key = %s LIMIT 1", (STORE_DB_KEY,))
+                    if cur.fetchone() is None:
+                        cur.execute(
+                            """
+                            INSERT INTO app_store (key, payload, updated_at)
+                            VALUES (%s, %s::jsonb, NOW())
+                            """,
+                            (STORE_DB_KEY, json.dumps(read_legacy_store_file(), ensure_ascii=False)),
+                        )
+                    ensure_default_admin_user(cur)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt >= DB_BOOTSTRAP_RETRIES:
+                break
+            time.sleep(DB_BOOTSTRAP_DELAY_SEC)
+    raise RuntimeError(f"Bootstrap Postgres fallito: {last_error}")
+
+
+def load_store() -> dict[str, Any]:
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT payload FROM app_store WHERE key = %s", (STORE_DB_KEY,))
+            row = cur.fetchone()
+    content = row["payload"] if isinstance(row, dict) else {"instances": []}
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except json.JSONDecodeError:
+            content = {"instances": []}
+    if not isinstance(content, dict):
+        content = {"instances": []}
+    instances = content.get("instances", [])
+    if not isinstance(instances, list):
+        instances = []
+    return {"instances": instances}
+
+
 def save_store(store: dict[str, Any]) -> None:
-    ensure_store_file()
-    tmp = CONFIG_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(store, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(CONFIG_FILE)
+    payload = {"instances": store.get("instances", []) if isinstance(store.get("instances"), list) else []}
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO app_store (key, payload, updated_at)
+                VALUES (%s, %s::jsonb, NOW())
+                ON CONFLICT (key)
+                DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+                """,
+                (STORE_DB_KEY, json.dumps(payload, ensure_ascii=False)),
+            )
 
 
 def ensure_light_state_file() -> None:
@@ -956,19 +1091,288 @@ def find_instance(store: dict[str, Any], instance_id: str) -> dict[str, Any] | N
     return None
 
 
-def instance_auth_meta(instance: dict[str, Any]) -> dict[str, Any]:
-    auth = instance.get("auth") if isinstance(instance.get("auth"), dict) else {}
-    username = clean_text(auth.get("username"), "")
-    password_hash = clean_text(auth.get("passwordHash"), "")
+def normalize_user_role(value: Any, fallback: str = "user") -> str:
+    role = clean_text(value, fallback).lower()
+    return role if role in USER_ROLES else fallback
+
+
+def is_valid_email(value: str) -> bool:
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+", clean_text(value, "")))
+
+
+def normalize_instance_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        instance_id = slugify(item, "")
+        if instance_id and instance_id not in seen:
+            seen.add(instance_id)
+            out.append(instance_id)
+    return out
+
+
+def fetch_user_row_by_id(user_id: str) -> dict[str, Any] | None:
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, username, email, password_hash, role, is_env_managed, created_at, updated_at
+                FROM app_users
+                WHERE id = %s
+                """,
+                (clean_text(user_id, ""),),
+            )
+            return cur.fetchone()
+
+
+def fetch_user_row_for_login(identifier: str) -> dict[str, Any] | None:
+    login_value = clean_text(identifier, "")
+    if not login_value:
+        return None
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, username, email, password_hash, role, is_env_managed, created_at, updated_at
+                FROM app_users
+                WHERE LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (login_value, login_value),
+            )
+            return cur.fetchone()
+
+
+def fetch_user_assignments_map() -> dict[str, list[str]]:
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, instance_id FROM app_user_instance_assignments ORDER BY instance_id ASC")
+            rows = cur.fetchall()
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        user_id = clean_text(row.get("user_id"), "")
+        instance_id = clean_text(row.get("instance_id"), "")
+        if not user_id or not instance_id:
+            continue
+        out.setdefault(user_id, []).append(instance_id)
+    return out
+
+
+def user_public_from_row(row: dict[str, Any], assignments: list[str] | None = None) -> dict[str, Any]:
+    instance_ids = assignments if isinstance(assignments, list) else []
     return {
-        "username": username,
-        "passwordConfigured": bool(username and password_hash),
+        "id": clean_text(row.get("id"), ""),
+        "username": clean_text(row.get("username"), ""),
+        "email": clean_text(row.get("email"), ""),
+        "role": normalize_user_role(row.get("role"), "user"),
+        "instanceIds": instance_ids,
+        "instancesCount": len(instance_ids),
+        "isDefaultAdmin": bool(row.get("is_env_managed")),
+        "updatedAt": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+    }
+
+
+def list_users_public() -> list[dict[str, Any]]:
+    assignments_map = fetch_user_assignments_map()
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, username, email, password_hash, role, is_env_managed, created_at, updated_at
+                FROM app_users
+                ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, LOWER(username) ASC
+                """
+            )
+            rows = cur.fetchall()
+    return [user_public_from_row(row, assignments_map.get(clean_text(row.get("id"), ""), [])) for row in rows]
+
+
+def admin_user_count(excluding_user_id: str = "") -> int:
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            if excluding_user_id:
+                cur.execute(
+                    "SELECT COUNT(*) AS total FROM app_users WHERE role = 'admin' AND id <> %s",
+                    (excluding_user_id,),
+                )
+            else:
+                cur.execute("SELECT COUNT(*) AS total FROM app_users WHERE role = 'admin'")
+            row = cur.fetchone()
+    return to_int((row or {}).get("total"), 0)
+
+
+def user_can_access_instance(user_row: dict[str, Any], instance_id: str) -> bool:
+    if normalize_user_role(user_row.get("role"), "user") == "admin":
+        return True
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM app_user_instance_assignments
+                WHERE user_id = %s AND instance_id = %s
+                LIMIT 1
+                """,
+                (clean_text(user_row.get("id"), ""), slugify(instance_id, "dr154-1")),
+            )
+            return cur.fetchone() is not None
+
+
+def migrate_instance_user_assignments(old_id: str, new_id: str) -> None:
+    old_clean = slugify(old_id, "dr154-1")
+    new_clean = slugify(new_id, "dr154-1")
+    if old_clean == new_clean:
+        return
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM app_user_instance_assignments
+                WHERE instance_id = %s
+                  AND user_id IN (
+                    SELECT user_id FROM app_user_instance_assignments WHERE instance_id = %s
+                  )
+                """,
+                (new_clean, old_clean),
+            )
+            cur.execute(
+                "UPDATE app_user_instance_assignments SET instance_id = %s WHERE instance_id = %s",
+                (new_clean, old_clean),
+            )
+
+
+def delete_instance_user_assignments(instance_id: str) -> None:
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_user_instance_assignments WHERE instance_id = %s", (slugify(instance_id, "dr154-1"),))
+
+
+def upsert_user(payload: dict[str, Any], user_id: str | None = None) -> dict[str, Any]:
+    current = fetch_user_row_by_id(user_id) if user_id else None
+    if user_id and current is None:
+        raise LookupError("Utente non trovato")
+    if current and current.get("is_env_managed"):
+        raise ValueError("L'admin di default gestito da env non può essere modificato dalla UI")
+
+    username = clean_text(payload.get("username"), clean_text((current or {}).get("username"), ""))
+    email = clean_text(payload.get("email"), clean_text((current or {}).get("email"), "")).lower()
+    role = normalize_user_role(payload.get("role"), normalize_user_role((current or {}).get("role"), "user"))
+    password = str(payload.get("password") or "").strip()
+
+    if not username:
+        raise ValueError("Username obbligatorio")
+    if not email or not is_valid_email(email):
+        raise ValueError("Email obbligatoria e non valida")
+    if not current and not password:
+        raise ValueError("Password obbligatoria")
+
+    store = load_store()
+    valid_instance_ids = {clean_text(item.get("id"), "") for item in store.get("instances", []) if isinstance(item, dict)}
+    instance_ids = [item for item in normalize_instance_ids(payload.get("instanceIds")) if item in valid_instance_ids]
+    if role == "admin":
+        instance_ids = []
+
+    password_hash = clean_text((current or {}).get("password_hash"), "")
+    if password:
+        password_hash = generate_password_hash(password)
+
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            if current:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM app_users
+                    WHERE id <> %s
+                      AND (LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s))
+                    LIMIT 1
+                    """,
+                    (current["id"], username, email),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM app_users
+                    WHERE LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s)
+                    LIMIT 1
+                    """,
+                    (username, email),
+                )
+            if cur.fetchone() is not None:
+                raise ValueError("Esiste già un utente con questo username o email")
+
+            if current:
+                if normalize_user_role(current.get("role"), "user") == "admin" and role != "admin" and admin_user_count(current["id"]) <= 0:
+                    raise ValueError("Deve rimanere almeno un admin attivo")
+                cur.execute(
+                    """
+                    UPDATE app_users
+                    SET username = %s,
+                        email = %s,
+                        password_hash = %s,
+                        role = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (username, email, password_hash, role, current["id"]),
+                )
+                resolved_id = clean_text(current.get("id"), "")
+            else:
+                resolved_id = str(uuid.uuid4())
+                cur.execute(
+                    """
+                    INSERT INTO app_users (id, username, email, password_hash, role, is_env_managed, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, FALSE, NOW(), NOW())
+                    """,
+                    (resolved_id, username, email, password_hash, role),
+                )
+
+            cur.execute("DELETE FROM app_user_instance_assignments WHERE user_id = %s", (resolved_id,))
+            for instance_id in instance_ids:
+                cur.execute(
+                    """
+                    INSERT INTO app_user_instance_assignments (user_id, instance_id, created_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (user_id, instance_id) DO NOTHING
+                    """,
+                    (resolved_id, instance_id),
+                )
+
+    saved = fetch_user_row_by_id(resolved_id)
+    assignments = fetch_user_assignments_map().get(resolved_id, [])
+    if not saved:
+        raise ValueError("Utente non trovato dopo il salvataggio")
+    return user_public_from_row(saved, assignments)
+
+
+def delete_user(user_id: str) -> None:
+    current = fetch_user_row_by_id(user_id)
+    if not current:
+        raise LookupError("Utente non trovato")
+    if current.get("is_env_managed"):
+        raise ValueError("L'admin di default gestito da env non può essere eliminato")
+    if normalize_user_role(current.get("role"), "user") == "admin" and admin_user_count(clean_text(current.get("id"), "")) <= 0:
+        raise ValueError("Deve rimanere almeno un admin attivo")
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_users WHERE id = %s", (clean_text(current.get("id"), ""),))
+
+
+def instance_auth_meta(instance: dict[str, Any]) -> dict[str, Any]:
+    _ = instance
+    return {
+        "username": "",
+        "passwordConfigured": True,
     }
 
 
 def instance_has_auth(instance: dict[str, Any]) -> bool:
-    meta = instance_auth_meta(instance)
-    return bool(meta["passwordConfigured"])
+    _ = instance
+    return True
 
 
 def instance_control_url(instance_id: str) -> str:
@@ -1104,16 +1508,23 @@ def sync_autoconfig_instance_in_store(instance_id: str) -> tuple[dict[str, Any] 
 
 
 def config_auth_enabled() -> bool:
-    return bool(CONFIG_AUTH_USERNAME and CONFIG_AUTH_PASSWORD)
+    return admin_user_count() > 0
 
 
 def config_token_cookie_name() -> str:
     return "sheltr_config_token"
 
 
-def issue_config_token() -> tuple[str, str]:
+def issue_config_token(user_row: dict[str, Any]) -> tuple[str, str]:
     now_ts = int(time.time())
-    token = CONFIG_TOKEN_SERIALIZER.dumps({"scope": "config", "iat": now_ts})
+    token = CONFIG_TOKEN_SERIALIZER.dumps(
+        {
+            "scope": "config",
+            "userId": clean_text(user_row.get("id"), ""),
+            "role": normalize_user_role(user_row.get("role"), "user"),
+            "iat": now_ts,
+        }
+    )
     expires_ts = now_ts + CONFIG_AUTH_TTL_SEC
     return token, datetime.fromtimestamp(expires_ts, tz=timezone.utc).replace(microsecond=0).isoformat()
 
@@ -1149,6 +1560,9 @@ def require_config_auth(body: dict[str, Any] | None = None):
         return err("Sessione configurazione non valida", 401)
     if not isinstance(payload, dict) or clean_text(payload.get("scope"), "") != "config":
         return err("Sessione configurazione non valida", 401)
+    user = fetch_user_row_by_id(clean_text(payload.get("userId"), ""))
+    if not user or normalize_user_role(user.get("role"), "user") != "admin":
+        return err("Permessi configurazione non validi", 401)
     return None
 
 
@@ -1156,9 +1570,16 @@ def instance_token_cookie_name(instance_id: str) -> str:
     return f"sheltr_token_{slugify(instance_id, 'dr154-1').replace('-', '_')}"
 
 
-def issue_instance_token(instance_id: str) -> tuple[str, str]:
+def issue_instance_token(instance_id: str, user_row: dict[str, Any]) -> tuple[str, str]:
     now_ts = int(time.time())
-    token = AUTH_TOKEN_SERIALIZER.dumps({"instanceId": instance_id, "iat": now_ts})
+    token = AUTH_TOKEN_SERIALIZER.dumps(
+        {
+            "instanceId": slugify(instance_id, "dr154-1"),
+            "userId": clean_text(user_row.get("id"), ""),
+            "role": normalize_user_role(user_row.get("role"), "user"),
+            "iat": now_ts,
+        }
+    )
     expires_ts = now_ts + INSTANCE_AUTH_TTL_SEC
     return token, datetime.fromtimestamp(expires_ts, tz=timezone.utc).replace(microsecond=0).isoformat()
 
@@ -1185,9 +1606,7 @@ def extract_instance_token(body: dict[str, Any] | None = None, instance_id: str 
 
 
 def require_instance_auth(instance: dict[str, Any], instance_id: str, body: dict[str, Any] | None = None):
-    if not instance_has_auth(instance):
-        return None
-
+    _ = instance
     token = extract_instance_token(body, instance_id=instance_id)
     if not token:
         return err("Autenticazione richiesta", 401)
@@ -1203,6 +1622,11 @@ def require_instance_auth(instance: dict[str, Any], instance_id: str, body: dict
         return err("Sessione non valida", 401)
     if clean_text(payload.get("instanceId"), "") != instance_id:
         return err("Sessione non valida per questa istanza", 401)
+    user = fetch_user_row_by_id(clean_text(payload.get("userId"), ""))
+    if not user:
+        return err("Sessione non valida", 401)
+    if not user_can_access_instance(user, instance_id):
+        return err("Permessi insufficienti per questa istanza", 403)
 
     return None
 
@@ -2816,6 +3240,15 @@ def execute_thermostat_targets(
 def list_view(instance: dict[str, Any]) -> dict[str, Any]:
     instance_id = clean_text(instance.get("id"), "dr154-1")
     device_type = instance_device_type(instance)
+    assigned_count = 0
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS total FROM app_user_instance_assignments WHERE instance_id = %s",
+                (instance_id,),
+            )
+            row = cur.fetchone()
+            assigned_count = to_int((row or {}).get("total"), 0)
     return {
         "id": instance_id,
         "name": clean_text(instance.get("name"), instance_id),
@@ -2823,7 +3256,8 @@ def list_view(instance: dict[str, Any]) -> dict[str, Any]:
         "deviceLabel": device_type_public(device_type)["label"],
         "protocolVersion": clean_text(instance.get("protocolVersion"), "1.6"),
         "boardsCount": len(instance.get("boards", [])),
-        "authRequired": instance_has_auth(instance),
+        "authRequired": True,
+        "assignedUsersCount": assigned_count,
         "controlUrl": instance_control_url(instance_id),
         "updatedAt": instance.get("updatedAt"),
     }
@@ -3267,6 +3701,11 @@ def config_page():
     return send_frontend_app_or_legacy("config.html")
 
 
+@app.get("/config/users")
+def config_users_page():
+    return send_frontend_app_or_legacy("config.html")
+
+
 @app.get("/instance/<instance_id>")
 def instance_page(instance_id: str):
     _ = instance_id
@@ -3289,7 +3728,7 @@ def api_config_auth():
     return jsonify(
         {
             "required": config_auth_enabled(),
-            "username": CONFIG_AUTH_USERNAME if config_auth_enabled() else "",
+            "username": "",
         }
     )
 
@@ -3299,11 +3738,16 @@ def api_config_auth_login():
     if not config_auth_enabled():
         return jsonify({"ok": True, "required": False, "token": "", "expiresAt": None})
     body = request.get_json(silent=True) or {}
-    username_in = clean_text(body.get("username"), "")
+    username_in = clean_text(body.get("username") or body.get("email"), "")
     password_in = str(body.get("password") or "")
-    if username_in != CONFIG_AUTH_USERNAME or password_in != CONFIG_AUTH_PASSWORD:
+    user = fetch_user_row_for_login(username_in)
+    if (
+        not user
+        or normalize_user_role(user.get("role"), "user") != "admin"
+        or not check_password_hash(clean_text(user.get("password_hash"), ""), password_in)
+    ):
         return err("Credenziali configurazione non valide", 401)
-    token, expires_at = issue_config_token()
+    token, expires_at = issue_config_token(user)
     response = jsonify({"ok": True, "required": True, "token": token, "expiresAt": expires_at})
     response.set_cookie(
         config_token_cookie_name(),
@@ -3382,6 +3826,56 @@ def api_config_publish_instance(instance_id: str):
     return api_publish_instance(instance_id)
 
 
+@app.get("/api/config/users")
+def api_config_list_users():
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    return jsonify({"users": list_users_public()})
+
+
+@app.post("/api/config/users")
+def api_config_create_user():
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    try:
+        user = upsert_user(body, None)
+    except ValueError as exc:
+        return err(str(exc), 400)
+    return jsonify({"user": user}), 201
+
+
+@app.put("/api/config/users/<user_id>")
+def api_config_update_user(user_id: str):
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
+    try:
+        user = upsert_user(body, clean_text(user_id, ""))
+    except LookupError as exc:
+        return err(str(exc), 404)
+    except ValueError as exc:
+        return err(str(exc), 400)
+    return jsonify({"user": user})
+
+
+@app.delete("/api/config/users/<user_id>")
+def api_config_delete_user(user_id: str):
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
+    try:
+        delete_user(clean_text(user_id, ""))
+    except LookupError as exc:
+        return err(str(exc), 404)
+    except ValueError as exc:
+        return err(str(exc), 400)
+    return jsonify({"ok": True})
+
+
 @app.get("/api/meta")
 def api_meta():
     return jsonify(
@@ -3425,6 +3919,9 @@ def api_list_instances():
 @app.post("/api/instances")
 def api_create_instance():
     body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
     fallback_id = slugify(body.get("id"), "dr154-1")
     instance = normalize_instance(body, fallback_id=fallback_id, current_instance=None)
 
@@ -3451,6 +3948,9 @@ def api_get_instance(instance_id: str):
 @app.put("/api/instances/<instance_id>")
 def api_update_instance(instance_id: str):
     body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
 
     with STORE_LOCK:
         store = load_store()
@@ -3482,12 +3982,16 @@ def api_update_instance(instance_id: str):
                         instances_map[instance["id"]] = old_state
                 save_light_state(light_state)
         migrate_instance_tokens(current_id, instance["id"])
+        migrate_instance_user_assignments(current_id, instance["id"])
 
     return jsonify({"instance": instance_public(instance)})
 
 
 @app.delete("/api/instances/<instance_id>")
 def api_delete_instance(instance_id: str):
+    auth_error = require_config_auth()
+    if auth_error is not None:
+        return auth_error
     with STORE_LOCK:
         store = load_store()
         current = find_instance(store, instance_id)
@@ -3503,6 +4007,7 @@ def api_delete_instance(instance_id: str):
         if isinstance(instances_map, dict):
             instances_map.pop(current_id, None)
             save_light_state(light_state)
+    delete_instance_user_assignments(current_id)
 
     return jsonify({"ok": True})
 
@@ -3531,15 +4036,15 @@ def api_instance_auth_login(instance_id: str):
     if not auth.get("passwordConfigured"):
         return err("Login non configurato per questa istanza", 400)
 
-    username_in = clean_text(body.get("username"), "")
+    username_in = clean_text(body.get("username") or body.get("email"), "")
     password_in = str(body.get("password") or "")
-    stored_auth = instance.get("auth") if isinstance(instance.get("auth"), dict) else {}
-    expected_user = clean_text(stored_auth.get("username"), "")
-    expected_hash = clean_text(stored_auth.get("passwordHash"), "")
-    if username_in != expected_user or not check_password_hash(expected_hash, password_in):
+    user = fetch_user_row_for_login(username_in)
+    if not user or not check_password_hash(clean_text(user.get("password_hash"), ""), password_in):
         return err("Credenziali non valide", 401)
+    if not user_can_access_instance(user, instance_id_real):
+        return err("Permessi insufficienti per questa istanza", 403)
 
-    token, expires_at = issue_instance_token(instance_id_real)
+    token, expires_at = issue_instance_token(instance_id_real, user)
     response = jsonify({"ok": True, "token": token, "expiresAt": expires_at})
     response.set_cookie(
         instance_token_cookie_name(instance_id_real),
@@ -3566,6 +4071,10 @@ def api_instance_auth_logout(instance_id: str):
 
 @app.post("/api/instances/<instance_id>/publish")
 def api_publish_instance(instance_id: str):
+    body = request.get_json(silent=True) or {}
+    auth_error = require_config_auth(body)
+    if auth_error is not None:
+        return auth_error
     with STORE_LOCK:
         store = load_store()
         instance = find_instance(store, instance_id)
@@ -3573,7 +4082,6 @@ def api_publish_instance(instance_id: str):
         return err("Istanza non trovata", 404)
     instance_id_real = clean_text(instance.get("id"), slugify(instance_id, "dr154-1"))
 
-    body = request.get_json(silent=True) or {}
     topic = clean_text(body.get("topic"), get_config_publish_topic(instance))
     if not topic:
         return err("Topic MQTT non valido", 400)
@@ -3989,6 +4497,7 @@ def api_thermostat_command(instance_id: str):
     )
 
 
+bootstrap_database()
 ensure_profile_loop()
 
 

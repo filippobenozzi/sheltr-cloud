@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
-import { Copy, ExternalLink, LayoutList, LogOut, Plus, Save, Settings2, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, LayoutList, LogOut, Plus, Save, Settings2, Trash2, UserPlus, Users } from "lucide-react"
 
 import { AppShell } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -50,7 +50,6 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { Switch } from "@/components/ui/switch"
 import { apiJson, ApiError, configTokenConfig } from "@/lib/api"
 import {
   associatedDevicesFromBoards,
@@ -73,6 +72,9 @@ import type {
   ConfigAuthResponse,
   ConfigInstanceListItem,
   ConfigMetaResponse,
+  ConfigUser,
+  ConfigUserResponse,
+  ConfigUsersResponse,
   DeviceType,
   DeviceTypePublic,
   InstanceMqtt,
@@ -86,11 +88,6 @@ type EditorInstance = {
   protocolVersion: string
   mqtt: InstanceMqtt
   boards: Board[]
-  auth: {
-    username: string
-    password: string
-    clearPassword: boolean
-  }
 }
 
 type ConfigInstancesResponse = {
@@ -112,6 +109,16 @@ type ConfigPublishResponse = {
   } | null
 }
 
+type UserDraft = {
+  id?: string
+  username: string
+  email: string
+  password: string
+  role: "admin" | "user"
+  instanceIds: string[]
+  isDefaultAdmin?: boolean
+}
+
 function configTokenKey() {
   return "sheltr-config-token"
 }
@@ -121,6 +128,17 @@ function cloneValue<T>(value: T): T {
     return structuredClone(value)
   }
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function emptyUserDraft(): UserDraft {
+  return {
+    username: "",
+    email: "",
+    password: "",
+    role: "user",
+    instanceIds: [],
+    isDefaultAdmin: false,
+  }
 }
 
 function forcedInstanceFromLocation(pathname: string, search: string) {
@@ -138,6 +156,10 @@ function controlUrl(instanceId: string) {
 
 function instanceConfigUrl(instanceId: string) {
   return `/instance/${encodeURIComponent(instanceId)}/config`
+}
+
+function configUsersUrl() {
+  return "/config/users"
 }
 
 function normalizeDeviceTypes(meta?: Record<string, DeviceTypePublic>) {
@@ -169,11 +191,6 @@ function editorFromInstance(instance: InstancePublic, mqttBaseTopic: string): Ed
       lightPayloadFormat: cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf"),
     },
     boards,
-    auth: {
-      username: cleanText(instance.auth?.username, ""),
-      password: "",
-      clearPassword: false,
-    },
   }
 }
 
@@ -235,11 +252,6 @@ function payloadFromEditor(editor: EditorInstance, mqttBaseTopic: string) {
       lightCommandTopic: derived.lightCommandTopic,
       lightResponseTopic: derived.lightResponseTopic,
       lightPayloadFormat: cleanText(deviceTypeMeta(deviceType).defaultPayloadFormat, "frame_hex_space_crlf"),
-    },
-    auth: {
-      username: cleanText(editor.auth.username, ""),
-      password: cleanText(editor.auth.password, ""),
-      clearPassword: Boolean(editor.auth.clearPassword),
     },
     boards,
   }
@@ -543,7 +555,7 @@ function InstancesTable({
             <th className="px-4 py-3 font-medium">Istanza</th>
             <th className="px-4 py-3 font-medium">Tipo</th>
             <th className="px-4 py-3 font-medium">Inventario</th>
-            <th className="px-4 py-3 font-medium">Accesso</th>
+            <th className="px-4 py-3 font-medium">Utenti</th>
             <th className="px-4 py-3 font-medium">Aggiornata</th>
             <th className="px-4 py-3 text-right font-medium">Azioni</th>
           </tr>
@@ -569,9 +581,7 @@ function InstancesTable({
                 <td className="px-4 py-4 text-muted-foreground">
                   {instanceInventoryLabel(normalizeDeviceType(instance.deviceType), instance.boardsCount)}
                 </td>
-                <td className="px-4 py-4">
-                  {instance.authRequired ? <Badge variant="secondary">Protetta</Badge> : <Badge variant="outline">Diretta</Badge>}
-                </td>
+                <td className="px-4 py-4 text-muted-foreground">{instance.assignedUsersCount ?? 0}</td>
                 <td className="px-4 py-4 text-muted-foreground">{formatUpdatedAt(instance.updatedAt) || "-"}</td>
                 <td className="px-4 py-4">
                   <div className="flex justify-end gap-2">
@@ -602,15 +612,225 @@ function InstancesTable({
   )
 }
 
+function UsersTable({
+  users,
+  instances,
+  onEdit,
+  onDelete,
+}: {
+  users: ConfigUser[]
+  instances: ConfigInstanceListItem[]
+  onEdit: (user: ConfigUser) => void
+  onDelete: (user: ConfigUser) => void
+}) {
+  const instanceMap = new Map(instances.map((instance) => [instance.id, instance.name]))
+
+  if (!users.length) {
+    return (
+      <Alert>
+        <AlertTitle>Nessun utente</AlertTitle>
+        <AlertDescription>Usa “Nuovo utente” per creare il primo accesso amministrativo o assegnato.</AlertDescription>
+      </Alert>
+    )
+  }
+
+  return (
+    <div className="min-w-0 overflow-x-auto border-y bg-background">
+      <table className="min-w-full text-sm">
+        <thead className="bg-muted/40 text-left text-muted-foreground">
+          <tr className="border-b">
+            <th className="px-4 py-3 font-medium">Utente</th>
+            <th className="px-4 py-3 font-medium">Email</th>
+            <th className="px-4 py-3 font-medium">Ruolo</th>
+            <th className="px-4 py-3 font-medium">Istanze</th>
+            <th className="px-4 py-3 font-medium">Aggiornato</th>
+            <th className="px-4 py-3 text-right font-medium">Azioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((user) => (
+            <tr key={user.id} className="border-b bg-background last:border-b-0">
+              <td className="px-4 py-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium text-foreground">{user.username}</p>
+                    {user.isDefaultAdmin ? <Badge variant="secondary">Default env</Badge> : null}
+                  </div>
+                </div>
+              </td>
+              <td className="px-4 py-4 text-muted-foreground">{user.email}</td>
+              <td className="px-4 py-4">
+                <Badge variant={user.role === "admin" ? "secondary" : "outline"}>
+                  {user.role === "admin" ? "Admin" : "User"}
+                </Badge>
+              </td>
+              <td className="px-4 py-4 text-muted-foreground">
+                {user.role === "admin"
+                  ? "Tutte le istanze"
+                  : user.instanceIds.length
+                    ? user.instanceIds.map((instanceId) => instanceMap.get(instanceId) || instanceId).join(", ")
+                    : "Nessuna assegnata"}
+              </td>
+              <td className="px-4 py-4 text-muted-foreground">{formatUpdatedAt(user.updatedAt) || "-"}</td>
+              <td className="px-4 py-4">
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={Boolean(user.isDefaultAdmin)}
+                    onClick={() => onEdit(user)}
+                  >
+                    <Settings2 className="size-4" />
+                    Modifica
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={Boolean(user.isDefaultAdmin)}
+                    onClick={() => onDelete(user)}
+                  >
+                    <Trash2 className="size-4" />
+                    Elimina
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function UserDialog({
+  open,
+  onOpenChange,
+  draft,
+  setDraft,
+  instances,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  draft: UserDraft
+  setDraft: (value: UserDraft) => void
+  instances: ConfigInstanceListItem[]
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}) {
+  const editing = Boolean(draft.id)
+
+  function toggleInstance(instanceId: string) {
+    const has = draft.instanceIds.includes(instanceId)
+    setDraft({
+      ...draft,
+      instanceIds: has ? draft.instanceIds.filter((value) => value !== instanceId) : [...draft.instanceIds, instanceId],
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{editing ? "Modifica utente" : "Nuovo utente"}</DialogTitle>
+          <DialogDescription>Gli admin vedono tutte le istanze. Gli user accedono solo a quelle assegnate.</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Username</Label>
+              <Input value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={draft.email}
+                onChange={(event) => setDraft({ ...draft, email: event.target.value })}
+                required
+              />
+            </div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Ruolo</Label>
+              <Select
+                value={draft.role}
+                onValueChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    role: value === "admin" ? "admin" : "user",
+                    instanceIds: value === "admin" ? [] : draft.instanceIds,
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="user">User</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{editing ? "Nuova password" : "Password"}</Label>
+              <Input
+                type="password"
+                value={draft.password}
+                onChange={(event) => setDraft({ ...draft, password: event.target.value })}
+                placeholder={editing ? "Lascia vuoto per non cambiarla" : ""}
+              />
+            </div>
+          </div>
+
+          {draft.role === "user" ? (
+            <div className="space-y-3">
+              <Label>Istanze assegnate</Label>
+              <div className="flex flex-wrap gap-2">
+                {instances.map((instance) => {
+                  const active = draft.instanceIds.includes(instance.id)
+                  return (
+                    <Button
+                      key={instance.id}
+                      type="button"
+                      variant={active ? "secondary" : "outline"}
+                      size="sm"
+                      className="rounded-md"
+                      onClick={() => toggleInstance(instance.id)}
+                    >
+                      {instance.name}
+                    </Button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Annulla
+            </Button>
+            <Button type="submit">{editing ? "Salva utente" : "Crea utente"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function ConfigPage() {
   const params = useParams()
   const location = useLocation()
   const navigate = useNavigate()
 
   const routeInstanceId = slugify(params.instanceId || forcedInstanceFromLocation(location.pathname, location.search), "")
-  const listView = !routeInstanceId
+  const usersView = location.pathname === configUsersUrl()
+  const listView = !routeInstanceId && !usersView
 
   const [instances, setInstances] = useState<ConfigInstanceListItem[]>([])
+  const [users, setUsers] = useState<ConfigUser[]>([])
   const [editor, setEditor] = useState<EditorInstance | null>(null)
   const [currentId, setCurrentId] = useState("")
   const [mqttBaseTopic, setMqttBaseTopic] = useState("dr154")
@@ -624,6 +844,8 @@ export function ConfigPage() {
   const [newName, setNewName] = useState("")
   const [newDeviceType, setNewDeviceType] = useState<DeviceType>(DEFAULT_DEVICE_TYPE)
   const [createOpen, setCreateOpen] = useState(false)
+  const [userDialogOpen, setUserDialogOpen] = useState(false)
+  const [userDraft, setUserDraft] = useState<UserDraft>(emptyUserDraft())
   const [loading, setLoading] = useState(true)
 
   function showNote(text: string, error = false, tone: "success" | "info" | "warning" = "success") {
@@ -647,6 +869,7 @@ export function ConfigPage() {
       setConfigToken("")
       localStorage.removeItem(configTokenKey())
       setInstances([])
+      setUsers([])
       setEditor(null)
       setCurrentId("")
       navigate("/config", { replace: true })
@@ -678,6 +901,15 @@ export function ConfigPage() {
     return items
   }
 
+  async function loadUsersList(tokenValue = configToken) {
+    const response = await apiJson<ConfigUsersResponse>("/api/config/users", {
+      tokenConfig: configTokenConfig(tokenValue),
+    })
+    const items = Array.isArray(response.users) ? response.users : []
+    setUsers(items)
+    return items
+  }
+
   async function loadInstance(instanceId: string, tokenValue = configToken, mqttBaseTopicValue = mqttBaseTopic) {
     const id = slugify(instanceId, "dr154-1")
     const response = await apiJson<ConfigInstanceResponse>(`/api/config/instances/${encodeURIComponent(id)}`, {
@@ -705,6 +937,7 @@ export function ConfigPage() {
 
         if (authRequired && !storedToken) {
           setInstances([])
+          setUsers([])
           setEditor(null)
           setCurrentId("")
           setLoading(false)
@@ -718,6 +951,8 @@ export function ConfigPage() {
 
         await loadInstancesList(tokenValue)
         if (cancelled) return
+        await loadUsersList(tokenValue)
+        if (cancelled) return
 
         if (routeInstanceId) {
           await loadInstance(routeInstanceId, tokenValue, baseTopicValue)
@@ -729,6 +964,7 @@ export function ConfigPage() {
         if (cancelled) return
         if (!handleConfigAuthError(caught)) {
           setInstances([])
+          setUsers([])
           setEditor(null)
           setCurrentId("")
           showNote(caught instanceof Error ? caught.message : "Errore caricamento configurazione", true)
@@ -769,7 +1005,6 @@ export function ConfigPage() {
           name,
           deviceType,
           applyDeviceDefaults: true,
-          auth: { username: "", password: "" },
           boards: [],
         },
         tokenConfig: configTokenConfig(configToken),
@@ -784,6 +1019,78 @@ export function ConfigPage() {
     } catch (caught) {
       if (!handleConfigAuthError(caught)) {
         showNote(caught instanceof Error ? caught.message : "Creazione istanza non riuscita", true)
+      }
+    }
+  }
+
+  function openNewUser() {
+    setUserDraft(emptyUserDraft())
+    setUserDialogOpen(true)
+  }
+
+  function openEditUser(user: ConfigUser) {
+    setUserDraft({
+      id: user.id,
+      username: cleanText(user.username, ""),
+      email: cleanText(user.email, ""),
+      password: "",
+      role: user.role === "admin" ? "admin" : "user",
+      instanceIds: Array.isArray(user.instanceIds) ? user.instanceIds : [],
+      isDefaultAdmin: Boolean(user.isDefaultAdmin),
+    })
+    setUserDialogOpen(true)
+  }
+
+  async function saveUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    try {
+      const body = {
+        username: cleanText(userDraft.username, ""),
+        email: cleanText(userDraft.email, ""),
+        password: cleanText(userDraft.password, ""),
+        role: userDraft.role,
+        instanceIds: userDraft.role === "admin" ? [] : userDraft.instanceIds,
+      }
+      if (userDraft.id) {
+        await apiJson<ConfigUserResponse>(`/api/config/users/${encodeURIComponent(userDraft.id)}`, {
+          method: "PUT",
+          body,
+          tokenConfig: configTokenConfig(configToken),
+        })
+        showNote(`Utente '${body.username}' aggiornato.`)
+      } else {
+        await apiJson<ConfigUserResponse>("/api/config/users", {
+          method: "POST",
+          body,
+          tokenConfig: configTokenConfig(configToken),
+        })
+        showNote(`Utente '${body.username}' creato.`)
+      }
+      setUserDialogOpen(false)
+      setUserDraft(emptyUserDraft())
+      await loadUsersList()
+      await loadInstancesList()
+    } catch (caught) {
+      if (!handleConfigAuthError(caught)) {
+        showNote(caught instanceof Error ? caught.message : "Salvataggio utente non riuscito", true)
+      }
+    }
+  }
+
+  async function deleteConfigUser(user: ConfigUser) {
+    if (!window.confirm(`Eliminare utente '${user.username}'?`)) {
+      return
+    }
+    try {
+      await apiJson<{ ok?: boolean }>(`/api/config/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        tokenConfig: configTokenConfig(configToken),
+      })
+      await loadUsersList()
+      showNote(`Utente '${user.username}' eliminato.`)
+    } catch (caught) {
+      if (!handleConfigAuthError(caught)) {
+        showNote(caught instanceof Error ? caught.message : "Eliminazione utente non riuscita", true)
       }
     }
   }
@@ -832,6 +1139,7 @@ export function ConfigPage() {
         setCurrentId(response.instance.id)
         setEditor(editorFromInstance(response.instance, mqttBaseTopic))
         await loadInstancesList()
+        await loadUsersList()
       }
       const autoconfig = response.autoconfig && typeof response.autoconfig === "object" ? response.autoconfig : null
       const isMiniDevice = normalizeDeviceType(saved.deviceType) === "sheltr_mini"
@@ -871,6 +1179,7 @@ export function ConfigPage() {
         tokenConfig: configTokenConfig(configToken),
       })
       await loadInstancesList()
+      await loadUsersList()
       setEditor(null)
       setCurrentId("")
       showNote(`Istanza '${currentId}' eliminata.`)
@@ -910,6 +1219,7 @@ export function ConfigPage() {
       setConfigPass("")
       const baseTopicValue = await loadConfigMeta(token)
       await loadInstancesList(token)
+      await loadUsersList(token)
       if (routeInstanceId) {
         await loadInstance(routeInstanceId, token, baseTopicValue)
       }
@@ -933,6 +1243,7 @@ export function ConfigPage() {
     setConfigToken("")
     localStorage.removeItem(configTokenKey())
     setInstances([])
+    setUsers([])
     setEditor(null)
     setCurrentId("")
     navigate("/config", { replace: true })
@@ -947,8 +1258,8 @@ export function ConfigPage() {
   const isMini = editor?.deviceType === "sheltr_mini"
   const deviceHint = editor ? transportHint(editor, mqttBaseTopic, deviceTypes) : ""
   const associatedDevices = editor ? associatedDevicesFromBoards(editor.boards) : []
-  const pageTitle = listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
-  const currentCrumb = listView ? "Istanze" : editor?.name || "Configurazione istanza"
+  const pageTitle = usersView ? "Utenti" : listView ? "Istanze" : editor ? editor.name : "Configurazione istanza"
+  const currentCrumb = usersView ? "Utenti" : listView ? "Istanze" : editor?.name || "Configurazione istanza"
   return (
     <AppShell
       title="Configurazione"
@@ -965,7 +1276,7 @@ export function ConfigPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Username config</Label>
+                <Label>Username o email</Label>
                 <Input value={configUser} onChange={(event) => setConfigUser(event.target.value)} />
               </div>
               <div className="space-y-2">
@@ -1015,12 +1326,34 @@ export function ConfigPage() {
                       <SidebarMenuItem>
                         <SidebarMenuButton
                           type="button"
+                          isActive={userDialogOpen && !userDraft.id}
+                          tooltip="Nuovo utente"
+                          onClick={openNewUser}
+                        >
+                          <UserPlus />
+                          <span className="group-data-[collapsible=icon]:hidden">Nuovo utente</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          type="button"
                           isActive={listView}
                           tooltip="Istanze"
                           onClick={() => navigate("/config")}
                         >
                           <LayoutList />
                           <span className="group-data-[collapsible=icon]:hidden">Istanze</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          type="button"
+                          isActive={usersView}
+                          tooltip="Utenti"
+                          onClick={() => navigate(configUsersUrl())}
+                        >
+                          <Users />
+                          <span className="group-data-[collapsible=icon]:hidden">Utenti</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     </SidebarMenu>
@@ -1060,15 +1393,15 @@ export function ConfigPage() {
                         </BreadcrumbItem>
                         <BreadcrumbDivider />
                         <BreadcrumbItem>
-                          {listView ? (
-                            <BreadcrumbPage>Istanze</BreadcrumbPage>
+                          {listView || usersView ? (
+                            <BreadcrumbPage>{usersView ? "Utenti" : "Istanze"}</BreadcrumbPage>
                           ) : (
                             <BreadcrumbLink asChild>
                               <Link to="/config">Istanze</Link>
                             </BreadcrumbLink>
                           )}
                         </BreadcrumbItem>
-                        {!listView ? (
+                        {!listView && !usersView ? (
                           <>
                             <BreadcrumbDivider />
                             <BreadcrumbItem>
@@ -1102,10 +1435,17 @@ export function ConfigPage() {
                     </>
                   ) : (
                     <>
-                      <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
-                        <Plus className="size-4" />
-                        <span className="hidden sm:inline">Aggiungi istanza</span>
-                      </Button>
+                      {usersView ? (
+                        <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={openNewUser}>
+                          <UserPlus className="size-4" />
+                          <span className="hidden sm:inline">Nuovo utente</span>
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" variant="outline" className="rounded-full" onClick={() => setCreateOpen(true)}>
+                          <Plus className="size-4" />
+                          <span className="hidden sm:inline">Aggiungi istanza</span>
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         size="sm"
@@ -1115,6 +1455,16 @@ export function ConfigPage() {
                       >
                         <LayoutList className="size-4" />
                         <span className="hidden sm:inline">Istanze</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={usersView ? "secondary" : "outline"}
+                        className="rounded-full"
+                        onClick={() => navigate(configUsersUrl())}
+                      >
+                        <Users className="size-4" />
+                        <span className="hidden sm:inline">Utenti</span>
                       </Button>
                     </>
                   )}
@@ -1139,7 +1489,14 @@ export function ConfigPage() {
                     </section>
                   ) : null}
 
-                  {!loading && !listView && !editor ? (
+                  {!loading && usersView ? (
+                    <section className="w-full min-w-0 space-y-4">
+                      <h2 className="text-2xl font-semibold tracking-tight">Utenti</h2>
+                      <UsersTable users={users} instances={instances} onEdit={openEditUser} onDelete={(user) => void deleteConfigUser(user)} />
+                    </section>
+                  ) : null}
+
+                  {!loading && !listView && !usersView && !editor ? (
                     <Card className="border-border/80 bg-background/90 shadow-none">
                       <CardContent className="p-6 text-sm text-muted-foreground">
                         Impossibile caricare la configurazione dell’istanza richiesta.
@@ -1200,46 +1557,6 @@ export function ConfigPage() {
                           </div>
                         </div>
                         {deviceHint ? <p className="text-sm text-muted-foreground">{deviceHint}</p> : null}
-                      </section>
-
-                      <Separator />
-
-                      <section className="space-y-4">
-                        <h2 className="text-xl font-semibold tracking-tight">Accesso</h2>
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <Label>Username accesso</Label>
-                            <Input
-                              value={editor.auth.username}
-                              onChange={(event) =>
-                                updateEditor({ ...editor, auth: { ...editor.auth, username: event.target.value } })
-                              }
-                              placeholder="es. filippo"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Password accesso</Label>
-                            <Input
-                              value={editor.auth.password}
-                              onChange={(event) =>
-                                updateEditor({ ...editor, auth: { ...editor.auth, password: event.target.value } })
-                              }
-                              placeholder="Visibile: nuova password o vuoto"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="space-y-1">
-                              <Label>Rimuovi password</Label>
-                              <p className="text-sm text-muted-foreground">Cancella la password salvata per questa istanza.</p>
-                            </div>
-                            <Switch
-                              checked={editor.auth.clearPassword}
-                              onCheckedChange={(checked) =>
-                                updateEditor({ ...editor, auth: { ...editor.auth, clearPassword: checked } })
-                              }
-                            />
-                          </div>
-                        </div>
                       </section>
 
                       <Separator />
@@ -1349,6 +1666,14 @@ export function ConfigPage() {
             setNewDeviceType={setNewDeviceType}
             deviceTypes={deviceTypes}
             onSubmit={createInstance}
+          />
+          <UserDialog
+            open={userDialogOpen}
+            onOpenChange={setUserDialogOpen}
+            draft={userDraft}
+            setDraft={setUserDraft}
+            instances={instances}
+            onSubmit={saveUser}
           />
         </>
       )}
